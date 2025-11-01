@@ -58,11 +58,11 @@ using namespace nvcuda;
 #define B_TILE_N BLOCK_N
 #define B_TILE_K (FRAGMENT_SIZE * K_FRAGMENTS_PER_ITER)
 
-// Number of elements per vecrtorized load
+// Number of elements per vectorized load
 #define NUM_ELEMENTS_PER_LOAD (sizeof(int4) / sizeof(fp16_t))
 
 // Number of threads loading a row of A_TILE
-#define A_TILE_NUM_THREADS_PER_ROW (A_TILE_K / NUM_ELEMENTS_PER_LOAD) //4
+#define A_TILE_NUM_THREADS_PER_ROW (A_TILE_K / NUM_ELEMENTS_PER_LOAD)
 // Number of rows loaded by each warp in A_TILE (assuming BLOCK_NUM_WARPS_M divides A_TILE_M)
 #define A_TILE_NUM_ROWS_PER_WARP (A_TILE_M / BLOCK_NUM_WARPS)
 // Number of rows loaded by each warp for each iteration
@@ -116,10 +116,7 @@ __global__ void gemm_fp16_kernel(const fp16_t* __restrict__ A, const fp16_t* __r
     // computes partial GEMM results and accumulates into output fragments
 #pragma unroll
     for (int kTile = 0; kTile < K; kTile += A_TILE_K) {
-        // sharedStoreOffset = (A_TILE_M + B_TILE_N) - sharedStoreOffset;
         // Load A_TILE into shared memory
-        // int kNextTile = kTile + A_TILE_K;
-        // if (kNextTile < K) {
 #pragma unroll
         for (int iter = 0; iter < A_TILE_NUM_LOAD_ITERS; ++iter) {
             int row = warpID * A_TILE_NUM_ROWS_PER_WARP + (laneID / A_TILE_NUM_THREADS_PER_ROW) + iter * A_TILE_NUM_ROWS_PER_WARP_PER_ITER;
