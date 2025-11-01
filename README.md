@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This repositary is a high-performance C++/CUDA library implementing **optimized kernels** for critical operators used in **Large Language Models (LLMs)**.
+This repositary hosts CUDA implementation of critical operators used in **Large Language Models (LLMs)**.
 
 ***
 
@@ -10,7 +10,7 @@ This repositary is a high-performance C++/CUDA library implementing **optimized 
 
 The following core LLM operators have custom CUDA kernel implementations in this repository.
 
-All experiements were run on a Acer Shadow SH16-73 Laptop with Nvidia Geforce RTX 5080 Laptop GPU (16GB GDDR7, Global Memory Bandwidth 890 GB/s).
+All experiements were run on a Acer Shadow SH16-73 Laptop with Nvidia Geforce RTX 5080 Laptop GPU (16GB GDDR7, Global Memory Bandwidth 890 GB/s) with CUDA 13.0.
 
 ### ElementwiseAdd
 
@@ -23,12 +23,20 @@ All experiements were run on a Acer Shadow SH16-73 Laptop with Nvidia Geforce RT
 
 ### GEMM
 
+#### HGEMM
 **Performance**
 
 | Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU TFLOPS |
 | :--- | :--- | :--- |:--- |:--- |:--- |
 |cublasSgemmEx|`(4096,4096)`|fp16| fp32 | 3469.28 | 39.616 |
-|elementwiseadd_fp32_kernel|`(4096,4096)`|fp32|fp32  | 3565.57 | 38.5462 |
+|gemm_fp16_kernel|`(4096,4096)`|fp16|fp32  | 3565.57 | 38.5462 |
+
+#### GLU (GLU/SwiGLU/GeGLU)
+**Performance**
+
+| Kernel | Input Shape | Input Type |GLU Type|Output Shape|Output Type| GPU Time (us)| GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
+|glu_bf16_kernel|`(128,8192), (8192, 3584), (8192, 3584)`|bf16|GLU/SwiGLU/GeGLU|`(128, 3584)`|fp32  | 500.8 | 30.0186 |
 
 **Remark** More advanced techniques (Asynchronous Memcpy, Double Buffering, etc.) didn't fit well on my laptop GPU, so I exclude them from the implementation.
 
