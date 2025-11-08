@@ -1,93 +1,137 @@
-# ⚡️ CUDA Operators for Large Language Models
+<div align="center">
+  <h1>⚡ CUDA Operators for Large Language Models</h1>
+  <p><strong>CUDA kernels used frequently in LLMs.</strong></p>
+  <p>Acer Shadow SH16-73 · RTX 5080 Laptop (16&nbsp;GB GDDR7 · 896&nbsp;GB/s) · CUDA 13.0</p>
+</div>
 
-## Project Overview
+<div align="center">
+  <a href="#"><img src="https://img.shields.io/badge/CUDA-13.0-3DDC84?style=flat-square" alt="CUDA 13.0 badge"></a>
+  <a href="#"><img src="https://img.shields.io/badge/GPU-RTX%205080%20Laptop-006DC3?style=flat-square" alt="GPU badge"></a>
+  <a href="#"><img src="https://img.shields.io/badge/OS-Linux-informational?style=flat-square" alt="OS badge"></a>
+</div>
 
-This repositary hosts CUDA implementation of critical operators used in **Large Language Models (LLMs)**.
+<hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
 
-***
+## <span style="color:#ffb600;">Project Overview</span>
 
-## Operators
+This repository hosts CUDA implementations of critical operators used in **Large Language Models (LLMs)**.
 
-The following core LLM operators have custom CUDA kernel implementations in this repository.
+<hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
 
-All experiements were run on a Acer Shadow SH16-73 Laptop with Nvidia Geforce RTX 5080 Laptop GPU (16GB GDDR7, Global Memory Bandwidth 890 GB/s) with CUDA 13.0.
+## <span style="color:#ffb600;">Core Operators</span>
 
-### ElementwiseAdd
+The following operator families use custom CUDA kernel implementations.
+
+<details open>
+<summary><strong>ElementwiseAdd</strong></summary>
 
 **Performance**
 
-| Kernel | Input Shape | Input Type | GPU Time (us)| GPU Memory Bandwidth (TB/s)|
+| Kernel | Input Shape | Input Type | GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |
 |cublasSgeam|`(4096,4096)`|fp32| 319.488 | 0.573122 |
 |elementwiseadd_fp32_kernel|`(4096,4096)`|fp32| 293.92 | 0.622977 |
+</details>
 
-### GEMM
 
-#### HGEMM
-**Performance**
+<details>
+<summary><strong>GLU (GLU/SwiGLU/GeGLU)</strong></summary>
 
-| Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU TFLOPS |
-| :--- | :--- | :--- |:--- |:--- |:--- |
-|cublasSgemmEx|`(4096,4096)`|fp16| fp32 | 3469.28 | 39.616 |
-|gemm_fp16_kernel|`(4096,4096)`|fp16|fp32  | 3565.57 | 38.5462 |
-
-#### GLU (GLU/SwiGLU/GeGLU)
 **Performance**
 
 | Kernel | Input Shape | Input Type |GLU Type|Output Shape|Output Type| GPU Time (us)| GPU TFLOPS |
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
 |glu_bf16_kernel|`(128,8192), (8192, 3584), (8192, 3584)`|bf16|GLU/SwiGLU/GeGLU|`(128, 3584)`|fp32  | 500.8 | 30.0186 |
 
-**Remark** More advanced techniques (Asynchronous Memcpy, Double Buffering, etc.) didn't fit well on my laptop GPU, so I exclude them from the implementation.
+> **Note**: Asynchronous memcpy, double buffering, and similar techniques were intentionally excluded to keep the kernels laptop-friendly.
+</details>
 
+<details>
+<summary><strong>HGEMM</strong></summary>
 
-### LayerNorm
+**Performance**
+
+| Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|cublasSgemmEx|`(4096,4096)`|fp16| fp32 | 3469.28 | 39.616 |
+|gemm_fp16_kernel|`(4096,4096)`|fp16|fp32  | 3565.57 | 38.5462 |
+</details>
+
+<details>
+<summary><strong>FlashAttention</strong></summary>
+
+**Description**
+
+Inference FlashAttention with grouped-query attention.
+
+**Performance**
+
+| Kernel | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |
+|infer_flash_gqa_bf16_kernel|`Batch = 60`<br>`SeqLen=4096`<br>`Q Heads=128`<br>`KV Heads=8`<br>`HeadDim=128`|bf16|fp16|fp32|  1825.86 | 0.503382 |
+</details>
+
+<details>
+<summary><strong>LayerNorm</strong></summary>
+
 **Description**
 
 Computes LayerNorm along the hidden dimension.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory Bandwidth (TB/s)|
+| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |
 |layernorm_fp32_kernel|`(4096,7168)`|fp32|  368.64 | 0.57949 |
+</details>
 
-### ReduceSum
+<details>
+<summary><strong>ReduceSum</strong></summary>
+
 **Description**
 
 Computes rowsum of a 2D matrix.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU Memory Bandwidth (TB/s)|
+| Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
 |cublasSgemv|`(4096,4096)`|fp32|`(4096,)`| 126.08 | 0.484217 |
 |elementwiseadd_fp32_kernel|`(4096,4096)`|fp32|`(4096,)`| 98.304  | 0.621033 |
+</details>
 
-### RMSNorm
+<details>
+<summary><strong>RMSNorm</strong></summary>
+
 **Description**
 
 Computes RMSNorm along the hidden dimension.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory Bandwidth (TB/s)|
+| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |
 |rmsnorm_fp32_kernel|`(4096,7168)`|fp32|  370.688 | 0.576288 |
+</details>
 
-### Softmax
+<details>
+<summary><strong>Softmax</strong></summary>
+
 **Description**
 
 Online safe softmax.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory Bandwidth (TB/s)|
+| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |
 |softmax_fp32_kernel|`(128,16384)`|fp32|  20.096 | 0.759295 |
 |softmax_fp32_kernel|`(32, 131072)`|fp32|   61.44 | 0.496705 |
+</details>
 
-### TopK
+<details>
+<summary><strong>TopK</strong></summary>
+
 **Description**
 
 Radix Select + Blelloch Scan.
@@ -97,8 +141,16 @@ Radix Select + Blelloch Scan.
 | Kernel | Input Shape | Input Type |GPU Time (us)|
 | :--- | :--- | :--- |:--- |
 |radixSelectTopK_fp32_kernel|`(4, 131072)`|fp32| 65.05   |
+</details>
 
+<hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
+<hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
 
-***
+## 🚀 <span style="color:#ffb600;">Quick Start</span>
 
-## Compilation and Running
+```bash
+nvcc -o softmax.o -gencode=arch=compute_120,code=sm_120 -O3 Softmax/softmax.cu
+./softmax
+```
+
+<hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
