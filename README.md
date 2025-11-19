@@ -30,7 +30,8 @@ The following operator families use custom CUDA kernel implementations.
 | Kernel | Input Shape | Input Type | GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |
 |cublasSgeam|`(4096,4096)`|fp32| 319.488 | 0.573122 |
-|elementwiseadd_fp32_kernel|`(4096,4096)`|fp32| 293.92 | 0.622977 |
+|ElementwiseAddFp32Kernel (CUDA)|`(4096,4096)`|fp32| 293.92 | 0.622977 |
+|elementwiseadd_fp32_kernel (Triton)|`(4096,4096)`|fp32| 288.111 | 0.636 |
 </details>
 
 
@@ -97,7 +98,8 @@ Computes rowsum of a 2D matrix.
 | Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
 |cublasSgemv|`(4096,4096)`|fp32|`(4096,)`| 126.08 | 0.484217 |
-|elementwiseadd_fp32_kernel|`(4096,4096)`|fp32|`(4096,)`| 98.304  | 0.621033 |
+|ReduceSumFp32Kernel (CUDA)|`(4096,4096)`|fp32|`(4096,)`| 90.144  | 0.67725 |
+|reducesum_fp32_kernel (Triton)|`(4096,4096)`|fp32|`(4096,)`| 111.682 | 0.547 |
 </details>
 
 <details>
