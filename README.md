@@ -27,11 +27,26 @@ The following operator families use custom CUDA kernel implementations.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type | GPU Time (us)| GPU Memory BW (TB/s)|
+| Kernel | Kernel Type | Input Shape | Input Type | GPU Time (us)| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|cublasSgeam| - |`(4096,4096)`|fp32| 319.488 | 0.573122 |
+|ElementwiseAddFp32Kernel | CUDA |`(4096,4096)`|fp32| 293.92 | 0.622977 |
+|elementwiseadd_fp32_kernel |Triton |`(4096,4096)`|fp32| 288.111 | 0.636 |
+</details>
+
+<details>
+<summary><strong>BitonicSort</strong></summary>
+
+**Description**
+
+Batched bitonic sort for power-of-two arrays using shared-memory tile sort followed by global merge.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type | GPU Time (us)|
 | :--- | :--- | :--- |:--- |:--- |
-|cublasSgeam|`(4096,4096)`|fp32| 319.488 | 0.573122 |
-|ElementwiseAddFp32Kernel (CUDA)|`(4096,4096)`|fp32| 293.92 | 0.622977 |
-|elementwiseadd_fp32_kernel (Triton)|`(4096,4096)`|fp32| 288.111 | 0.636 |
+|BitonicSortFp32Kernel| CUDA |`BATCH_SIZE=30`<br> `ARRAY_LENGTH=16K`|fp32| 145.248 |
+|BitonicSortFp32Kernel| CUDA |`BATCH_SIZE=1`<br> `ARRAY_LENGTH=1M`|fp32| 1064.1 |
 </details>
 
 
@@ -40,9 +55,9 @@ The following operator families use custom CUDA kernel implementations.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GLU Type|Output Shape|Output Type| GPU Time (us)| GPU TFLOPS |
-| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
-|glu_bf16_kernel|`(128,8192), (8192, 3584), (8192, 3584)`|bf16|GLU/SwiGLU/GeGLU|`(128, 3584)`|fp32  | 500.8 | 30.0186 |
+| Kernel | Kernel Type | Input Shape | Input Type |GLU Type|Output Shape|Output Type| GPU Time (us)| GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
+|glu_bf16_kernel|CUDA |`(128,8192), (8192, 3584), (8192, 3584)`|bf16|GLU/SwiGLU/GeGLU|`(128, 3584)`|fp32  | 500.8 | 30.0186 |
 
 > **Note**: Asynchronous memcpy, double buffering, and similar techniques were intentionally excluded to keep the kernels laptop-friendly.
 </details>
@@ -52,10 +67,10 @@ The following operator families use custom CUDA kernel implementations.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU TFLOPS |
-| :--- | :--- | :--- |:--- |:--- |:--- |
-|cublasSgemmEx|`(4096,4096)`|fp16| fp32 | 3469.28 | 39.616 |
-|gemm_fp16_kernel|`(4096,4096)`|fp16|fp32  | 3565.57 | 38.5462 |
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type| GPU Time (us)| GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |
+|cublasSgemmEx| - |`(4096,4096)`|fp16| fp32 | 3469.28 | 39.616 |
+|gemm_fp16_kernel| CUDA |`(4096,4096)`|fp16|fp32  | 3565.57 | 38.5462 |
 </details>
 
 <details>
@@ -67,9 +82,9 @@ Inference FlashAttention with grouped-query attention.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) |
-| :--- | :--- | :--- |:--- |:--- |:--- |:--- |
-|infer_flash_gqa_bf16_kernel|`Batch = 60`<br>`SeqLen=4096`<br>`Q Heads=128`<br>`KV Heads=8`<br>`HeadDim=128`|bf16|fp16|fp32|  1825.86 | 0.503382 |
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
+|infer_flash_gqa_bf16_kernel| CUDA |`Batch = 60`<br>`SeqLen=4096`<br>`Q Heads=128`<br>`KV Heads=8`<br>`HeadDim=128`|bf16|fp16|fp32|  1825.86 | 0.503382 |
 </details>
 
 <details>
@@ -81,9 +96,9 @@ Computes LayerNorm along the hidden dimension.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
-| :--- | :--- | :--- |:--- |:--- |
-|layernorm_fp32_kernel|`(4096,7168)`|fp32|  368.64 | 0.57949 |
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|layernorm_fp32_kernel| CUDA |`(4096,7168)`|fp32|  368.64 | 0.57949 |
 </details>
 
 <details>
@@ -95,11 +110,11 @@ Computes rowsum of a 2D matrix.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |Output Type| GPU Time (us)| GPU Memory BW (TB/s)|
-| :--- | :--- | :--- |:--- |:--- |:--- |
-|cublasSgemv|`(4096,4096)`|fp32|`(4096,)`| 126.08 | 0.484217 |
-|ReduceSumFp32Kernel (CUDA)|`(4096,4096)`|fp32|`(4096,)`| 90.144  | 0.67725 |
-|reducesum_fp32_kernel (Triton)|`(4096,4096)`|fp32|`(4096,)`| 111.682 | 0.547 |
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type| GPU Time (us)| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |
+|cublasSgemv| |`(4096,4096)`|fp32|`(4096,)`| 126.08 | 0.484217 |
+|ReduceSumFp32Kernel (CUDA)| CUDA |`(4096,4096)`|fp32|`(4096,)`| 90.144  | 0.67725 |
+|reducesum_fp32_kernel (Triton)| Triton |`(4096,4096)`|fp32|`(4096,)`| 111.682 | 0.547 |
 </details>
 
 <details>
@@ -111,9 +126,9 @@ Computes RMSNorm along the hidden dimension.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
-| :--- | :--- | :--- |:--- |:--- |
-|rmsnorm_fp32_kernel|`(4096,7168)`|fp32|  370.688 | 0.576288 |
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|rmsnorm_fp32_kernel| CUDA |`(4096,7168)`|fp32|  370.688 | 0.576288 |
 </details>
 
 <details>
@@ -125,10 +140,10 @@ Online safe softmax.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
-| :--- | :--- | :--- |:--- |:--- |
-|softmax_fp32_kernel|`(128,16384)`|fp32|  20.096 | 0.759295 |
-|softmax_fp32_kernel|`(32, 131072)`|fp32|   61.44 | 0.496705 |
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|softmax_fp32_kernel| CUDA |`(128,16384)`|fp32|  20.096 | 0.759295 |
+|softmax_fp32_kernel| CUDA |`(32, 131072)`|fp32|   61.44 | 0.496705 |
 </details>
 
 <details>
@@ -140,9 +155,9 @@ Radix Select + Blelloch Scan.
 
 **Performance**
 
-| Kernel | Input Shape | Input Type |GPU Time (us)|
-| :--- | :--- | :--- |:--- |
-|radixSelectTopK_fp32_kernel|`(4, 131072)`|fp32| 65.05   |
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)|
+| :--- | :--- | :--- |:--- |:--- |
+|radixSelectTopK_fp32_kernel| CUDA |`(4, 131072)`|fp32| 65.05   |
 </details>
 
 <hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
