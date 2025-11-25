@@ -34,21 +34,6 @@ The following operator families use custom CUDA kernel implementations.
 |elementwiseadd_fp32_kernel |Triton |`(4096,4096)`|fp32| 288.111 | 0.636 |
 </details>
 
-<details>
-<summary><strong>BitonicSort</strong></summary>
-
-**Description**
-
-Batched bitonic sort for power-of-two arrays using shared-memory tile sort followed by global merge.
-
-**Performance**
-
-| Kernel | Kernel Type | Input Shape | Input Type | GPU Time (us)|
-| :--- | :--- | :--- |:--- |:--- |
-|BitonicSortFp32Kernel| CUDA |`BATCH_SIZE=30`<br> `ARRAY_LENGTH=16K`|fp32| 145.248 |
-|BitonicSortFp32Kernel| CUDA |`BATCH_SIZE=1`<br> `ARRAY_LENGTH=1M`|fp32| 1064.1 |
-</details>
-
 
 <details>
 <summary><strong>GLU (GLU/SwiGLU/GeGLU)</strong></summary>
@@ -145,6 +130,25 @@ Online safe softmax.
 |softmax_fp32_kernel| CUDA |`(128,16384)`|fp32|  20.096 | 0.759295 |
 |softmax_fp32_kernel| CUDA |`(32, 131072)`|fp32|   61.44 | 0.496705 |
 </details>
+
+<details>
+<summary><strong>Sort</strong></summary>
+
+**Description**
+
+- Bitonic sort for power-of-two arrays using shared-memory tile sorting followed by global merge.
+- LSD radix sort with histogram + prefix-sum + scatter passes.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type | GPU Time (us)|
+| :--- | :--- | :--- |:--- |:--- |
+|BitonicSortFp32Kernel| CUDA |`BATCH_SIZE=60`<br> `ARRAY_LENGTH=2K`|fp32| 55.936 |
+|| |`BATCH_SIZE=1`<br> `ARRAY_LENGTH=1M`|fp32| 1367.26 |
+|RadixSortFp32Kernel| CUDA |`BATCH_SIZE=60`<br> `ARRAY_LENGTH=2K`|fp32| 136.768 |
+|| |`BATCH_SIZE=1`<br> `ARRAY_LENGTH=1M`|fp32| 200.064 |
+</details>
+
 
 <details>
 <summary><strong>TopK</strong></summary>

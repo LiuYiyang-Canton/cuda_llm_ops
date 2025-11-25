@@ -13,14 +13,15 @@ namespace {
 
 constexpr int kBatchSize = 1;
 constexpr int kArrayLength = 1024 * 1024;
-constexpr int kThreadsPerBlock = 1024;
+constexpr int kThreadsPerBlock = 256;
 constexpr int kWorkPerThread = 4;
-constexpr int kLocalWorkPerThread = 16;
+constexpr int kLocalWorkPerThread = 4;
 constexpr int kVectorWidth = 4;
 constexpr int kPadding = 4;  // Must be a multiple of kVectorWidth for float4 access.
 constexpr int kWarpSize = 32;
 
-static_assert((kArrayLength & (kArrayLength - 1)) == 0, "kArrayLength must be a power of two for bitonic sort");
+static_assert(kArrayLength > 0 && (kArrayLength & (kArrayLength - 1)) == 0,
+              "kArrayLength must be a positive power of two for bitonic sort");
 static_assert(kLocalWorkPerThread % kVectorWidth == 0, "Each thread must handle a multiple of kVectorWidth elements");
 
 constexpr int kLocalSize = kThreadsPerBlock * kLocalWorkPerThread;
