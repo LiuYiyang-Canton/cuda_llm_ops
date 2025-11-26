@@ -44,18 +44,21 @@ The following operator families use custom CUDA kernel implementations.
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
 |glu_bf16_kernel|CUDA |`(128,8192), (8192, 3584), (8192, 3584)`|bf16|GLU/SwiGLU/GeGLU|`(128, 3584)`|fp32  | 500.8 | 30.0186 |
 
-> **Note**: Asynchronous memcpy, double buffering, and similar techniques were intentionally excluded to keep the kernels laptop-friendly.
 </details>
 
-<details>
-<summary><strong>HGEMM</strong></summary>
+<details open>
+<summary><strong>GEMM</strong></summary>
 
 **Performance**
 
-| Kernel | Kernel Type | Input Shape | Input Type |Output Type| GPU Time (us)| GPU TFLOPS |
-| :--- | :--- | :--- |:--- |:--- |:--- |:--- |
-|cublasSgemmEx| - |`(4096,4096)`|fp16| fp32 | 3469.28 | 39.616 |
-|gemm_fp16_kernel| CUDA |`(4096,4096)`|fp16|fp32  | 3565.57 | 38.5462 |
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type | Accum Type | GPU Time (us)| GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
+|cublasSgemmEx| - |`(4096,4096)`|fp16| fp32 | fp32 | 2251.28 | 61.0492 |
+|gemm_fp16_kernel| CUDA |`(4096,4096)`|fp16|fp32  | fp32 | 2099.3 | 65.4691 |
+|gemm_fp16_kernel| Triton |`(4096,4096)`|fp16|fp32  |  fp32 |2392.465 | 57.447 |
+|gemm_fp8_kernel| Triton |`(4096,4096)`|fp8|fp32  |  fp32 | 1228.735 | 111.854 |
+
+> **Note**: Asynchronous memcpy and similar techniques were intentionally excluded from CUDA kernel to keep the kernels laptop-friendly.
 </details>
 
 <details>
