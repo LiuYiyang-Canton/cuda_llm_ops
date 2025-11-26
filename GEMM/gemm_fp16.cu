@@ -25,10 +25,10 @@ using namespace nvcuda;
 
 // Each thread block computes BLOCK_M X BLOCK_N output elements
 #define BLOCK_M 128
-#define BLOCK_N 64
+#define BLOCK_N 128
 
 // How many warps along M and N dimensions in a thread block
-#define BLOCK_NUM_WARPS_M 4
+#define BLOCK_NUM_WARPS_M 2
 #define BLOCK_NUM_WARPS_N 2
 #define BLOCK_NUM_WARPS (BLOCK_NUM_WARPS_M * BLOCK_NUM_WARPS_N)
 
@@ -48,7 +48,7 @@ using namespace nvcuda;
 #define BLOCK_NUM_THREADS (BLOCK_NUM_WARPS_M * BLOCK_NUM_WARPS_N * WARP_SIZE)
 
 // Number of fragments along K dimension computed per iteration
-#define K_FRAGMENTS_PER_ITER 2
+#define K_FRAGMENTS_PER_ITER 4
 
 // Shape of a tile of matrix A loaded each time per block
 #define A_TILE_M BLOCK_M
@@ -134,24 +134,44 @@ __global__ void gemm_fp16_kernel(const fp16_t* __restrict__ A, const fp16_t* __r
             int globalCol = kTile + col;
             *(int4*)&Bs[row * SHARED_MEM_STRIDE + col] = *(int4*)&B[globalRow * K + globalCol];
         }
+
+        // Double buffering for load_matrix_sync and mma_sync
+        __syncthreads();
+        int mma_stage = 0;
+        wmma::fragment<wmma::matrix_a, FRAGMENT_SIZE, FRAGMENT_SIZE, FRAGMENT_SIZE, fp16_t, wmma::row_major> aFrag[2][WARP_NUM_FRAGMENTS_M];
+        wmma::fragment<wmma::matrix_b, FRAGMENT_SIZE, FRAGMENT_SIZE, FRAGMENT_SIZE, fp16_t, wmma::col_major> bFrag[2][WARP_NUM_FRAGMENTS_N];
+#pragma unroll
+        for (int i = 0; i < WARP_NUM_FRAGMENTS_M; ++i) {
+            int row = warpID / BLOCK_NUM_WARPS_N * WARP_M + i * FRAGMENT_SIZE;
+            int col = 0 * FRAGMENT_SIZE;
+            wmma::load_matrix_sync(aFrag[mma_stage][i], &As[row * SHARED_MEM_STRIDE + col], SHARED_MEM_STRIDE);
+        }
+#pragma unroll
+        for (int j = 0; j < WARP_NUM_FRAGMENTS_N; ++j) {
+            int row = warpID % BLOCK_NUM_WARPS_N * WARP_N + j * FRAGMENT_SIZE;
+            int col = 0 * FRAGMENT_SIZE;
+            wmma::load_matrix_sync(bFrag[mma_stage][j], &Bs[row * SHARED_MEM_STRIDE + col], SHARED_MEM_STRIDE);
+        }
         __syncthreads();
         // Compute partial GEMM results
 #pragma unroll
         for (int kFrag = 0; kFrag < K_FRAGMENTS_PER_ITER; ++kFrag) {
-            wmma::fragment<wmma::matrix_a, FRAGMENT_SIZE, FRAGMENT_SIZE, FRAGMENT_SIZE, fp16_t, wmma::row_major> aFrag[WARP_NUM_FRAGMENTS_M];
-            wmma::fragment<wmma::matrix_b, FRAGMENT_SIZE, FRAGMENT_SIZE, FRAGMENT_SIZE, fp16_t, wmma::col_major> bFrag[WARP_NUM_FRAGMENTS_N];
+            mma_stage = 1 - mma_stage;
             // Load A fragments from shared memory to WMMA fragments
-#pragma unroll
-            for (int i = 0; i < WARP_NUM_FRAGMENTS_M; ++i) {
-                int row = warpID / BLOCK_NUM_WARPS_N * WARP_M + i * FRAGMENT_SIZE;
-                int col = kFrag * FRAGMENT_SIZE;
-                wmma::load_matrix_sync(aFrag[i], &As[row * SHARED_MEM_STRIDE + col], SHARED_MEM_STRIDE);
-            }
-#pragma unroll
-            for (int j = 0; j < WARP_NUM_FRAGMENTS_N; ++j) {
-                int row = warpID % BLOCK_NUM_WARPS_N * WARP_N + j * FRAGMENT_SIZE;
-                int col = kFrag * FRAGMENT_SIZE;
-                wmma::load_matrix_sync(bFrag[j], &Bs[row * SHARED_MEM_STRIDE + col], SHARED_MEM_STRIDE);
+            int knextFrag = kFrag + 1;
+            if (knextFrag < K_FRAGMENTS_PER_ITER) {
+                #pragma unroll
+                for (int i = 0; i < WARP_NUM_FRAGMENTS_M; ++i) {
+                    int row = warpID / BLOCK_NUM_WARPS_N * WARP_M + i * FRAGMENT_SIZE;
+                    int col = knextFrag * FRAGMENT_SIZE;
+                    wmma::load_matrix_sync(aFrag[mma_stage][i], &As[row * SHARED_MEM_STRIDE + col], SHARED_MEM_STRIDE);
+                }
+                #pragma unroll
+                for (int j = 0; j < WARP_NUM_FRAGMENTS_N; ++j) {
+                    int row = warpID % BLOCK_NUM_WARPS_N * WARP_N + j * FRAGMENT_SIZE;
+                    int col = knextFrag * FRAGMENT_SIZE;
+                    wmma::load_matrix_sync(bFrag[mma_stage][j], &Bs[row * SHARED_MEM_STRIDE + col], SHARED_MEM_STRIDE);
+                }
             }
 
             // Perform matrix multiplication and accumulate results
@@ -159,7 +179,7 @@ __global__ void gemm_fp16_kernel(const fp16_t* __restrict__ A, const fp16_t* __r
             for (int i = 0; i < WARP_NUM_FRAGMENTS_M; ++i) {
 #pragma unroll
                 for (int j = 0; j < WARP_NUM_FRAGMENTS_N; ++j) {
-                    wmma::mma_sync(cFrag[i][j], aFrag[i], bFrag[j], cFrag[i][j]);
+                    wmma::mma_sync(cFrag[i][j], aFrag[1 - mma_stage][i], bFrag[1 - mma_stage][j], cFrag[i][j]);
                 }
             }
         }
@@ -249,7 +269,7 @@ int main() {
     float beta = 0.0f;
     
     // cublas warm up
-    for (int i = 0; i < 1000; ++i) {
+    for (int i = 0; i < 10; ++i) {
         cublasGemmEx(
             handle,             // cuBLAS handle
             CUBLAS_OP_T,        // transa: Transpose A (for row-major A)
@@ -273,30 +293,33 @@ int main() {
         );
     }
     cudaEventRecord(start);
-    cublasGemmEx(
-        handle,             // cuBLAS handle
-        CUBLAS_OP_T,        // transa: Transpose A (for row-major A)
-        CUBLAS_OP_N,        // transb: No transpose B (for column-major B)
-        N,                  // m: rows of op(A) and C (M)
-        M,                  // n: columns of op(B) and C (N)
-        K,                  // k: inner dimension
-        &alpha,             // alpha (pointer to float)
-        BDevice,                // A matrix (fp16)
-        CUDA_R_16F,         // A type (fp16)
-        K,                // lda: Leading dimension of A (M)
-        ADevice,                // B matrix (fp16)
-        CUDA_R_16F,         // B type (fp16)
-        K,                // ldb: Leading dimension of B (K)
-        &beta,              // beta (pointer to float)
-        CDevice,                // C matrix (fp32 output/input)
-        CUDA_R_32F,         // C type (fp32)
-        N,                // ldc: Leading dimension of C (M)
-        CUBLAS_COMPUTE_32F_FAST_16F, // Compute type (fp16 multiplication, fp32 accumulation with Tensor Cores)
-        CUBLAS_GEMM_DEFAULT_TENSOR_OP // Gemm algorithm selection
-    );
+    for (int i = 0; i < 10; ++i) {
+        cublasGemmEx(
+            handle,             // cuBLAS handle
+            CUBLAS_OP_T,        // transa: Transpose A (for row-major A)
+            CUBLAS_OP_N,        // transb: No transpose B (for column-major B)
+            N,                  // m: rows of op(A) and C (M)
+            M,                  // n: columns of op(B) and C (N)
+            K,                  // k: inner dimension
+            &alpha,             // alpha (pointer to float)
+            BDevice,                // A matrix (fp16)
+            CUDA_R_16F,         // A type (fp16)
+            K,                // lda: Leading dimension of A (M)
+            ADevice,                // B matrix (fp16)
+            CUDA_R_16F,         // B type (fp16)
+            K,                // ldb: Leading dimension of B (K)
+            &beta,              // beta (pointer to float)
+            CDevice,                // C matrix (fp32 output/input)
+            CUDA_R_32F,         // C type (fp32)
+            N,                // ldc: Leading dimension of C (M)
+            CUBLAS_COMPUTE_32F_FAST_16F, // Compute type (fp16 multiplication, fp32 accumulation with Tensor Cores)
+            CUBLAS_GEMM_DEFAULT_TENSOR_OP // Gemm algorithm selection
+        );
+    }
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime, start, stop);
+    elapsedTime /= 10;
     std::cout << "cuBLAS gemmEx elapsed time: " << elapsedTime * 1000 << " us" << std::endl;
     float peakTFLOPS = static_cast<float>(2.0 * M) * static_cast<float>(N) * static_cast<float>(K) / 1e12 / (elapsedTime / 1e3);
     std::cout << "cuBLAS gemmEx peak TFLOPS: " << peakTFLOPS << " TFLOPS" << std::endl;
@@ -317,18 +340,15 @@ int main() {
         cudaFuncSetAttribute(gemm_fp16_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, sharedMemSize);
     }
 
-    // Warm up
-    for (int i = 0; i < 1000; ++i) {
-        gemm_fp16_kernel<<<numBlocks, numThreads, sharedMemSize>>>(ADevice, BDevice, CDevice);
-    }
-
-
     cudaEventRecord(start);
     // Launch kernel
-    gemm_fp16_kernel<<<numBlocks, numThreads, sharedMemSize>>>(ADevice, BDevice, CDevice);
+    for (int i = 0; i < 10; ++i) {
+        gemm_fp16_kernel<<<numBlocks, numThreads, sharedMemSize>>>(ADevice, BDevice, CDevice);
+    }
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime, start, stop);
+    elapsedTime /= 10.0;
     std::cout << "gemm_fp16_kernel elapsed time: " << elapsedTime * 1000 << " us" << std::endl;
     peakTFLOPS = static_cast<float>(2.0 * M) * static_cast<float>(N) * static_cast<float>(K) / 1e12 / (elapsedTime / 1e3);
     std::cout << "gemm_fp16_kernel peak TFLOPS: " << peakTFLOPS << " TFLOPS" << std::endl;
