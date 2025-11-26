@@ -53,10 +53,10 @@ The following operator families use custom CUDA kernel implementations.
 
 | Kernel | Kernel Type | Input Shape | Input Type |Output Type | Accum Type | GPU Time (us)| GPU TFLOPS |
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
-|cublasSgemmEx| - |`(4096,4096)`|fp16| fp32 | fp32 | 2251.28 | 61.0492 |
-|gemm_fp16_kernel| CUDA |`(4096,4096)`|fp16|fp32  | fp32 | 2099.3 | 65.4691 |
-|gemm_fp16_kernel| Triton |`(4096,4096)`|fp16|fp32  |  fp32 |2392.465 | 57.447 |
-|gemm_fp8_kernel| Triton |`(4096,4096)`|fp8|fp32  |  fp32 | 1228.735 | 111.854 |
+|cublasSgemmEx| - |`M=N=K=4096`|fp16| fp32 | fp32 | 2251.28 | 61.0492 |
+|gemm_fp16_kernel| CUDA |`M=N=K=4096`|fp16|fp32  | fp32 | 2099.3 | 65.4691 |
+|gemm_fp16_kernel| Triton |`M=N=K=4096`|fp16|fp32  |  fp32 |2392.465 | 57.447 |
+|gemm_fp8_kernel| Triton |`M=N=K=4096`|fp8|fp32  |  fp32 | 1228.735 | 111.854 |
 
 > **Note**: Asynchronous memcpy and similar techniques were intentionally excluded from CUDA kernel to keep the kernels laptop-friendly.
 </details>
@@ -72,7 +72,7 @@ Inference FlashAttention with grouped-query attention.
 
 | Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) |
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
-|infer_flash_gqa_bf16_kernel| CUDA |`Batch = 60`<br>`SeqLen=4096`<br>`Q Heads=128`<br>`KV Heads=8`<br>`HeadDim=128`|bf16|fp16|fp32|  1825.86 | 0.503382 |
+|infer_flash_gqa_bf16_kernel| CUDA |`BATCH = 60`<br>`SEQLEN = 4096`<br>`Q HEADS = 128`<br>`KV HEADS = 8`<br>`HEADDIM = 128`|bf16|fp16|fp32|  1825.86 | 0.503382 |
 </details>
 
 <details>
@@ -120,6 +120,20 @@ Computes RMSNorm along the hidden dimension.
 </details>
 
 <details>
+<summary><strong>RoPE (Rotary Position Embedding)</strong></summary>
+
+**Description**
+
+Applies rotary position embeddings along the hidden dimension for bf16 inputs/outputs.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type|GPU Time (us)| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |
+|RopeBf16Kernel| CUDA |`BATCH = 1`<br>`SEQLEN = 512K`<br> `HIDDEN = 128`|bf16|bf16|510.112 | 0.478602 |
+</details>
+
+<details>
 <summary><strong>Softmax</strong></summary>
 
 **Description**
@@ -146,10 +160,10 @@ Online safe softmax.
 
 | Kernel | Kernel Type | Input Shape | Input Type | GPU Time (us)|
 | :--- | :--- | :--- |:--- |:--- |
-|BitonicSortFp32Kernel| CUDA |`BATCH_SIZE=60`<br> `ARRAY_LENGTH=2K`|fp32| 55.936 |
-|| |`BATCH_SIZE=1`<br> `ARRAY_LENGTH=1M`|fp32| 1367.26 |
-|RadixSortFp32Kernel| CUDA |`BATCH_SIZE=60`<br> `ARRAY_LENGTH=2K`|fp32| 136.768 |
-|| |`BATCH_SIZE=1`<br> `ARRAY_LENGTH=1M`|fp32| 200.064 |
+|BitonicSortFp32Kernel| CUDA |`BATCH = 60`<br> `ARRAY_LENGTH = 2K`|fp32| 55.936 |
+|| |`BATCH = 1`<br> `ARRAY_LENGTH = 1M`|fp32| 1367.26 |
+|RadixSortFp32Kernel| CUDA |`BATCH = 60`<br> `ARRAY_LENGTH = 2K`|fp32| 136.768 |
+|| |`BATCH = 1`<br> `ARRAY_LENGTH = 1M`|fp32| 200.064 |
 </details>
 
 
@@ -164,7 +178,7 @@ Radix Select + Blelloch Scan.
 
 | Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)|
 | :--- | :--- | :--- |:--- |:--- |
-|radixSelectTopK_fp32_kernel| CUDA |`(4, 131072)`|fp32| 65.05   |
+|radixSelectTopK_fp32_kernel| CUDA |`BATCH = 4`<br>`SEQLEN = 128K`<br>`TopK = 2K`|fp32| 65.05   |
 </details>
 
 <hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
@@ -174,7 +188,7 @@ Radix Select + Blelloch Scan.
 
 ```bash
 nvcc -o softmax.o -gencode=arch=compute_120,code=sm_120 -O3 Softmax/softmax.cu
-./softmax
+./softmax.o
 ```
 
 <hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
