@@ -36,13 +36,21 @@ The following operator families use custom CUDA kernel implementations.
 
 
 <details>
-<summary><strong>GLU (GLU/SwiGLU/GeGLU)</strong></summary>
+<summary><strong>GLU (Gated Linear Unit, GLU/SwiGLU/GeGLU)</strong></summary>
+
+**Description**
+
+For input $X \in \mathbb{R}^{B \times d_{\text{in}}}$ and projection weights $W_a, W_b \in \mathbb{R}^{d_{\text{in}} \times d_{\text{out}}}$, the gated output is
+
+$$Y = (X W_a) \odot \sigma(X W_b), \quad Y \in \mathbb{R}^{B \times d_{\text{out}}}$$
+
+where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for SwiGLU, GELU for GeGLU).
 
 **Performance**
 
-| Kernel | Kernel Type | Input Shape | Input Type |GLU Type|Output Shape|Output Type| GPU Time (us)| GPU TFLOPS |
-| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
-|glu_bf16_kernel|CUDA |`(128,8192), (8192, 3584), (8192, 3584)`|bf16|GLU/SwiGLU/GeGLU|`(128, 3584)`|fp32  | 500.8 | 30.0186 |
+| Kernel | Kernel Type | Input Shape | Input Type |GLU Type|Output Type| GPU Time (us)| GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
+|glu_bf16_kernel|CUDA |`BATCH=128`<br>`IN_DIM=8192`<br>`OUT_DIM=3584`|bf16|GLU/SwiGLU/GeGLU|fp32  | 311.872 | 48.2034 |
 
 </details>
 
@@ -62,17 +70,18 @@ The following operator families use custom CUDA kernel implementations.
 </details>
 
 <details>
-<summary><strong>FlashAttention</strong></summary>
+<summary><strong>FlashGQA</strong></summary>
 
 **Description**
 
-Inference FlashAttention with grouped-query attention.
+FlashGQA for inference.
 
 **Performance**
 
 | Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) |
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
-|infer_flash_gqa_bf16_kernel| CUDA |`BATCH = 60`<br>`SEQLEN = 4096`<br>`Q HEADS = 128`<br>`KV HEADS = 8`<br>`HEADDIM = 128`|bf16|fp16|fp32|  1825.86 | 0.503382 |
+|infer_flash_gqa_bf16_kernel| CUDA |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1825.86 | 0.503382 |
+|infer_flash_gqa_bf16_kernel| Triton |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1850.12 | 0.496780 |
 </details>
 
 <details>

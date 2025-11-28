@@ -1,7 +1,7 @@
 // A custom cuda implementation of Inference Flash GQA
 // Input and output type should both be bf16, accumulated in fp32
 
-// Compilation command: nvcc -o infer_gqa -gencode=arch=compute_120,code=sm_120  infer_flash_gqa.cu   -Xcompiler -fopenmp -O3 --use_fast_math
+// Compilation command: nvcc -o infer_gqa.o -gencode=arch=compute_120,code=sm_120  infer_flash_gqa.cu   -Xcompiler -fopenmp -O3 --use_fast_math
 
 #include <iostream>
 #include <cuda_runtime.h>
