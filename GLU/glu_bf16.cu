@@ -3,7 +3,7 @@
 // Matrix B is column-major KxN bf16 matrix
 // The output Matrix C is row-major MxN fp32 matrix
 
-// Compilation command: nvcc -o glu_bf16 -gencode=arch=compute_120,code=sm_120  glu_bf16.cu  -Xcompiler -fopenmp -O3 --use_fast_math
+// Compilation command: nvcc -o glu_bf16.o -gencode=arch=compute_120,code=sm_120  glu_bf16.cu  -Xcompiler -fopenmp -O3 --use_fast_math
 
 #include <cuda_bf16.h>
 #include <iostream>
@@ -254,6 +254,8 @@ float ComputeRMSE(const float* __restrict__ golden, const float* __restrict x, s
 int main() {
     assert(A_TILE_K == B_TILE_K);
     assert(BATCH_SIZE % BLOCK_M == 0 && INTERMEDIATE_SIZE % BLOCK_N == 0 && K % A_TILE_K == 0);
+    int warmupIters = 10;
+    int repeatIters = 10;
 
     // generate random seed
     unsigned seed = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -318,16 +320,19 @@ int main() {
     }
 
     // Warm up
-    for (int i = 0; i < 1000; ++i) {
+    for (int i = 0; i < warmupIters; ++i) {
         glu_bf16_kernel<<<numBlocks, numThreads, sharedMemSize>>>(xDevice, weightDevice, resultDevice);
     }
 
     cudaEventRecord(start);
     // Launch kernel
-    glu_bf16_kernel<<<numBlocks, numThreads, sharedMemSize>>>(xDevice, weightDevice, resultDevice);
+    for (int i = 0; i < repeatIters; ++i) {
+        glu_bf16_kernel<<<numBlocks, numThreads, sharedMemSize>>>(xDevice, weightDevice, resultDevice);
+    }
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime, start, stop);
+    elapsedTime /= repeatIters; // average time per run
     std::cout << "glu_bf16_kernel elapsed time: " << elapsedTime * 1000 << " us" << std::endl;
     float peakTFLOPS = ((2.0f * BATCH_SIZE) * INTERMEDIATE_SIZE * 2 * K + BATCH_SIZE * INTERMEDIATE_SIZE * 2.0) / 1e12 / (elapsedTime / 1e3);
     std::cout << "glu_bf16_kernel peak TFLOPS: " << peakTFLOPS << " TFLOPS" << std::endl;
