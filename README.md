@@ -22,7 +22,7 @@ This repository hosts CUDA implementations of critical operators used in **Large
 
 The following operator families use custom CUDA kernel implementations.
 
-<details open>
+<details>
 <summary><strong>ElementwiseAdd</strong></summary>
 
 **Performance**
@@ -54,7 +54,7 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 
 </details>
 
-<details open>
+<details>
 <summary><strong>GEMM</strong></summary>
 
 **Performance**
@@ -64,7 +64,7 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 |cublasSgemmEx| - |`M=N=K=4096`|fp16| fp32 | fp32 | 2251.28 | 61.0492 |
 |gemm_fp16_kernel| CUDA |`M=N=K=4096`|fp16|fp32  | fp32 | 2099.3 | 65.4691 |
 |gemm_fp16_kernel| Triton |`M=N=K=4096`|fp16|fp32  |  fp32 |2392.465 | 57.447 |
-|gemm_fp8_kernel| Triton |`M=N=K=4096`|fp8|fp32  |  fp32 | 1228.735 | 111.854 |
+|gemm_fp8_kernel| Triton |`M=N=K=4096`|fp8_e4m3|fp32  |  fp32 | 1228.735 | 111.854 |
 
 > **Note**: Asynchronous memcpy and similar techniques were intentionally excluded from CUDA kernel to keep the kernels laptop-friendly.
 </details>
@@ -96,6 +96,20 @@ Computes LayerNorm along the hidden dimension.
 | Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
 |layernorm_fp32_kernel| CUDA |`(4096,7168)`|fp32|  368.64 | 0.57949 |
+</details>
+
+<details>
+<summary><strong>Linear Attention: SSD (Mamba2)</strong></summary>
+
+**Description**
+
+State Space Duality from Mamba2.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|ssd_mamba2_kernel| Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`BC Heads = 1`<br>`X Heads = 8`<br>`StateDim = 64`<br>`HeadDim = 64`<br>`Chunk size = 128`|bf16 (except the fp32 decay) |  2.609 | 14.017 |
 </details>
 
 <details>
