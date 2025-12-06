@@ -22,7 +22,7 @@ This repository hosts CUDA implementations of critical operators used in **Large
 
 The following operator families use custom CUDA kernel implementations.
 
-<details open>
+<details>
 <summary><strong>ElementwiseAdd</strong></summary>
 
 **Performance**
@@ -54,7 +54,7 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 
 </details>
 
-<details open>
+<details>
 <summary><strong>GEMM</strong></summary>
 
 **Performance**
@@ -95,6 +95,20 @@ Computes LayerNorm along the hidden dimension.
 | Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
 |layernorm_fp32_kernel| CUDA |`(4096,7168)`|fp32|  368.64 | 0.57949 |
+</details>
+
+<details>
+<summary><strong>Linear Attention: SSD (Mamba2)</strong></summary>
+
+**Description**
+
+Chunkise implementation of State Space Duality from Mamba2.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|ssd_mamba2_kernel| Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`BC Heads = 1`<br>`X Heads = 8`<br>`StateDim = 64`<br>`HeadDim = 64`<br>`Chunk size = 128`|bf16 (except the fp32 decay) |  2.609 | 14.017 |
 </details>
 
 <details>
