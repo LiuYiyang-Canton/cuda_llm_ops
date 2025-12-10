@@ -63,10 +63,9 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
 |cublasSgemmEx| - |`M=N=K=4096`|fp16| fp32 | fp32 | 2251.28 | 61.0492 |
 |gemm_fp16_kernel| CUDA |`M=N=K=4096`|fp16|fp32  | fp32 | 2099.3 | 65.4691 |
-|gemm_fp16_kernel| Triton |`M=N=K=4096`|fp16|fp32  |  fp32 |2392.465 | 57.447 |
-|gemm_fp8_kernel| Triton |`M=N=K=4096`|fp8|fp32  |  fp32 | 1228.735 | 111.854 |
+|gemm_fp16_kernel| Triton |`M=N=K=4096`|fp16|fp32  |  fp32 | 2388.533 | 57.541 |
+|gemm_fp8_kernel| Triton |`M=N=K=4096`|fp8_e4m3|fp32  |  fp32 | 1177.447 | 116.726 |
 
-> **Note**: Asynchronous memcpy and similar techniques were intentionally excluded from CUDA kernel to keep the kernels laptop-friendly.
 </details>
 
 <details>
