@@ -36,7 +36,7 @@ The following operator families use custom CUDA kernel implementations.
 
 
 <details>
-<summary><strong>GLU (Gated Linear Unit, GLU/SwiGLU/GeGLU)</strong></summary>
+<summary><strong>GLU</strong></summary>
 
 **Description**
 
@@ -48,9 +48,9 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 
 **Performance**
 
-| Kernel | Kernel Type | Input Shape | Input Type |GLU Type|Output Type| GPU Time (us)| GPU TFLOPS |
-| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
-|glu_bf16_kernel|CUDA |`BATCH=128`<br>`IN_DIM=8192`<br>`OUT_DIM=3584`|bf16|GLU/SwiGLU/GeGLU|fp32  | 311.872 | 48.2034 |
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type| GPU Time (us)| GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |
+|glu_bf16_kernel|CUDA |`BATCH=128`<br>`IN_DIM=8192`<br>`OUT_DIM=3584`|bf16|fp32  | 311.872 | 48.2034 |
 
 </details>
 
@@ -112,6 +112,20 @@ Chunkise implementation of State Space Duality from Mamba2.
 </details>
 
 <details>
+<summary><strong>Linear Attention: Gated DeltaNet</strong></summary>
+
+**Description**
+
+Chunkise implementation of Gated DeltaNet.
+
+**Performance**
+
+| Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS|
+| :--- | :--- |:--- |:--- |:--- |
+|Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`Num Heads = 8`<br>`HeadDim = 64`<br>`Chunk size = 64`|bf16 (except the fp32 decay) |  7.707 | 9.660 |
+</details>
+
+<details>
 <summary><strong>ReduceSum</strong></summary>
 
 **Description**
@@ -142,7 +156,7 @@ Computes RMSNorm along the hidden dimension.
 </details>
 
 <details>
-<summary><strong>RoPE (Rotary Position Embedding)</strong></summary>
+<summary><strong>RoPE</strong></summary>
 
 **Description**
 
