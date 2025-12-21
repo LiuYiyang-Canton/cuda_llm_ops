@@ -440,7 +440,41 @@ def main():
         )
 
         triton_tflops = triton_flops / (triton_chunk_ms * 1e-3) / 1e12
-        print(f"Triton time: {triton_chunk_ms :.3f} ms | TFLOPS: {triton_tflops:.3f}")
+
+        sizeof_bf16 = 2
+        sizeof_float32 = 4
+
+        # Memory bandwidth computation
+        # On my laptop device with 64M of L2 cache, most of the tensors (128K seq, 8 heads, 64 headdim, chunk size 64)
+        # here have size ~256M,
+        # so they don't fit into L2 even if they have just been written by a previous kernel.
+        # Therefore, I'm counting each read and write for these tensors.
+        triton_bw = (
+            batch * num_chunks * chunk_size * num_heads * sizeof_float32 * 2 + # compute_local_cumsum
+            batch * num_chunks * chunk_size * num_heads * sizeof_float32 + 
+            batch * num_chunks * chunk_size * num_heads * headdim_qk * sizeof_bf16 +
+            batch * num_chunks * chunk_size * num_heads * chunk_size * sizeof_float32 + # compute_scaled_kkt
+            batch * num_chunks * chunk_size * num_heads * chunk_size * sizeof_float32 +
+            batch * num_chunks * chunk_size * num_heads * chunk_size * sizeof_float32 + # solve_tril
+            batch * num_chunks * chunk_size * num_heads * chunk_size * sizeof_float32 +
+            batch * num_chunks * chunk_size * num_heads * headdim_qk * sizeof_bf16 + 
+            batch * num_chunks * chunk_size * num_heads * headdim_v * sizeof_bf16 + 
+            batch * num_chunks * chunk_size * num_heads * headdim_qk * sizeof_float32 +
+            batch * num_chunks * chunk_size * num_heads * headdim_v * sizeof_float32 + # compute_w_u
+            batch * num_chunks * chunk_size * num_heads * headdim_qk * sizeof_float32 +
+            batch * num_chunks * chunk_size * num_heads * headdim_v * sizeof_float32 +
+            batch * num_chunks * chunk_size * num_heads * headdim_qk * sizeof_bf16 + 
+            batch * num_chunks * num_heads * headdim_qk * headdim_v * sizeof_float32 + 
+            batch * num_chunks * chunk_size * num_heads * headdim_v * sizeof_bf16 + # compute_states
+            batch * num_chunks * chunk_size * num_heads * headdim_qk * sizeof_bf16 +
+            batch * num_chunks * chunk_size * num_heads * headdim_qk * sizeof_bf16 + 
+            batch * num_chunks * chunk_size * num_heads * headdim_v * sizeof_bf16 +
+            batch * num_chunks * num_heads * headdim_qk * headdim_v * sizeof_float32 + 
+            batch * num_chunks * chunk_size * num_heads * headdim_v * sizeof_bf16 # compute_output
+        )
+        triton_bw = triton_bw / (2 ** 40) / (triton_chunk_ms * 1e-3)
+
+        print(f"Triton time: {triton_chunk_ms :.3f} ms | TFLOPS: {triton_tflops:.3f} | BW: {triton_bw:.3f} TB/s")
 
     torch_chunk_ms = benchmark_gdn_torch_chunk(alpha, beta, q, k, v, chunk_size, warmup_iters, benchmark_reps)
     print(f"gated_delta_net_torch_chunk latency: {torch_chunk_ms:.3f} ms")

@@ -650,14 +650,7 @@ def test():
         warmup=warmup_iters,
         rep=repetition_iters,
     )
-    bytes_transferred = x.element_size() * x.numel() + \
-                        A.element_size() * A.numel() + \
-                        B.element_size() * B.numel() + \
-                        C.element_size() * C.numel() + \
-                        y_torch.element_size() * y_torch.numel() + \
-                        final_states_torch.element_size() * final_states_torch.numel()
-    torch_bw = bytes_transferred / (torch_ms * 1e-3) / (1024 ** 4)
-    print(f"Torch time: {torch_ms :.3f} ms | bandwidth: {torch_bw} TB/s")
+    print(f"Torch time: {torch_ms :.3f} ms")
 
     num_chunks = seq_len // chunk_size
     final_states_triton = launch_ssd_mamba2(x, A, B, C, y_triton, chunk_size=chunk_size)
@@ -679,7 +672,31 @@ def test():
         2 * batch_size * num_heads * num_chunks * (chunk_size * state_dim * head_dim)  # inter-chunk C states
     )
 
-    triton_bw = bytes_transferred / (triton_ms * 1e-3) / (1024 ** 4)
+    # Memory bandwidth computation
+    # On my laptop device with 64M of L2 cache, chunk_states and diag_y (128K seq, 8 heads, 64 headdim, chunk size 128)
+    # here have size ~256M,
+    # so they don't fit into L2 even if they have just been written by a previous kernel.
+    # Therefore, I'm counting each read and write for these two tensors.
+    sizeof_bf16 = 2
+    sizeof_float32 = 4
+    triton_bytes_transferred = (
+        # ssd_intra_chunk_kernel
+        batch_size * seq_len * num_heads * head_dim * sizeof_bf16 + # reading x
+        batch_size * seq_len * num_heads * sizeof_float32 + # reading A
+        batch_size * seq_len * num_groups * state_dim * sizeof_bf16 + # reading B
+        batch_size * seq_len * num_groups * state_dim * sizeof_bf16 + # reading C
+        batch_size * seq_len * num_heads * head_dim * sizeof_float32 + # writing diag_y
+        batch_size * num_heads * (1 + num_chunks) * sizeof_float32 + # writing intra_chunk_cumsum
+        batch_size * num_heads * seq_len * sizeof_float32 + # writing state_decay
+        batch_size * (1 + num_chunks) * num_heads * head_dim * state_dim * sizeof_float32 + # writing chunk_states
+        # ssd_inter_chunk_scan_linear_kernel
+        batch_size * (1 + num_chunks) * num_heads * head_dim * state_dim * sizeof_float32 + # reading chunk_states
+        batch_size * seq_len * num_heads * head_dim * sizeof_float32 + # reading diag_y
+        batch_size * num_heads * head_dim * state_dim * sizeof_float32 + # writing final_states
+        batch_size * seq_len * num_heads * head_dim * sizeof_bf16 # writing out_y
+    )
+
+    triton_bw = triton_bytes_transferred / (triton_ms * 1e-3) / (1024 ** 4)
     triton_tflops = triton_flops / (triton_ms * 1e-3) / 1e12
     print(f"Triton time: {triton_ms :.3f} ms | bandwidth: {triton_bw:.3f} TB/s | TFLOPS: {triton_tflops:.3f}")
 

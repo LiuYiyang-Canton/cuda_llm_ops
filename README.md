@@ -106,9 +106,9 @@ Chunkise implementation of State Space Duality from Mamba2.
 
 **Performance**
 
-| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS|
+| Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
-|ssd_mamba2_kernel| Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`BC Heads = 1`<br>`X Heads = 8`<br>`StateDim = 64`<br>`HeadDim = 64`<br>`Chunk size = 128`|bf16 (except the fp32 decay) |  2.609 | 14.017 |
+|Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`BC Heads = 1`<br>`X Heads = 8`<br>`StateDim = 64`<br>`HeadDim = 64`<br>`Chunk size = 128`|bf16 (except the fp32 decay) |  2.609 | 14.017 | 0.388
 </details>
 
 <details>
@@ -120,9 +120,9 @@ Chunkise implementation of Gated DeltaNet.
 
 **Performance**
 
-| Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS|
-| :--- | :--- |:--- |:--- |:--- |
-|Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`Num Heads = 8`<br>`HeadDim = 64`<br>`Chunk size = 64`|bf16 (except the fp32 decay) |  7.707 | 9.660 |
+| Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS| GPU Memory BW (TB/s)|
+| :--- | :--- |:--- |:--- |:--- |:--- |
+|Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`Num Heads = 8`<br>`HeadDim = 64`<br>`Chunk size = 64`|bf16 (except the fp32 decay) |  8.338 | 8.929 | 0.426 |
 </details>
 
 <details>
