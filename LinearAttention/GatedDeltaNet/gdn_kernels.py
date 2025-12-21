@@ -542,7 +542,7 @@ def compute_scaled_kkt(
     Args:
         g (torch.Tensor): [B, N, C, H] float32 cumulative log-decays.
         beta_chunks (torch.Tensor): [B, N, C, H] float32 beta values.
-        k_chunks (torch.Tensor): [B, N, C, H, D_qk] bfloat16/float16 key vectors.
+        k_chunks (torch.Tensor): [B, N, C, H, D_qk] bfloat16 key vectors.
         chunk_size (int): Chunk length (C).
 
     Returns:
