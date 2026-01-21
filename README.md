@@ -34,9 +34,24 @@ The following operator families use custom CUDA kernel implementations.
 |elementwiseadd_fp32_kernel |Triton |`(4096,4096)`|fp32| 288.111 | 0.636 |
 </details>
 
+<details>
+<summary><strong>Engram</strong></summary>
+
+**Description**
+
+CPU hash generation for Engram features.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type | CPU Time (us) |
+| :--- | :--- | :--- | :--- | :--- |
+|GetNgramHashes| C++ |`B = 1`<br>`T = 128K`<br>`MaxNgram = 3`<br>`Heads = 8`|int64| 638 |
+</details>
+
+
 
 <details>
-<summary><strong>GLU</strong></summary>
+<summary><strong>Gated Linear Units</strong></summary>
 
 **Description**
 
