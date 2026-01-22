@@ -195,8 +195,23 @@ Online safe softmax.
 
 | Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
-|softmax_fp32_kernel| CUDA |`(128,16384)`|fp32|  20.096 | 0.759295 |
-|softmax_fp32_kernel| CUDA |`(32, 131072)`|fp32|   61.44 | 0.496705 |
+|Softmax| CUDA |`(32, 131072)`|fp32|   61.44 | 0.496705 |
+|SoftmaxBackward| CUDA |`(32, 131072)`|fp32|   106.3 | 0.44 |
+</details>
+
+<details>
+<summary><strong>SoftmaxCrossEntropy</strong></summary>
+
+**Description**
+
+Fused softmax + cross-entropy loss.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|SoftmaxCrossEntropy| CUDA |`(32, 131072)`|fp32|   44.00 | 0.346 |
+|SoftmaxCrossEntropyBackward| CUDA |`(32, 131072)`|fp32|   34.816 | 0.342 |
 </details>
 
 <details>

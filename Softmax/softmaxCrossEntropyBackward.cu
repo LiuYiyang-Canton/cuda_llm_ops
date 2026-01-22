@@ -1,6 +1,6 @@
-// Compilation command: nvcc -O3 --use_fast_math -gencode=arch=compute_120,code=sm_120 Softmax/softmax.cu -o softmax
+// Compilation command: nvcc -O3 --use_fast_math -gencode=arch=compute_120,code=sm_120 Softmax/softmaxCrossEntropyBackward.cu -o softmaxCrossEntropyBackward
 /**
- * Online safe softmax CUDA example with CPU reference, correctness check, and timing.
+ * Softmax cross-entropy backward CUDA example with CPU reference, correctness check, and timing.
  */
 #include <cuda_runtime.h>
 
@@ -48,18 +48,18 @@ struct TileMaxSumReduce {
 /**
  * Kernel that computes per-row max and sum for softmax.
  *
- * @param x device pointer to input.
+ * @param logits device pointer to input logits.
  * @param rowMax device pointer to output row max values.
  * @param rowSum device pointer to output row sum values.
  */
-__global__ void ComputeRowMaxRowSumFp32Kernel(const float* __restrict__ x,
+__global__ void ComputeRowMaxRowSumFp32Kernel(const float* __restrict__ logits,
                                               float* __restrict__ rowMax,
                                               float* __restrict__ rowSum) {
     int warpId = threadIdx.x / kWarpSize;
     int batchIdx = blockIdx.x;
     int tx = threadIdx.x;
-    x += batchIdx * kFeatureSize;
-    const float4* x4 = reinterpret_cast<const float4*>(x);
+    logits += batchIdx * kFeatureSize;
+    const float4* logits4 = reinterpret_cast<const float4*>(logits);
     auto warp = cg::tiled_partition<kWarpSize>(cg::this_thread_block());
     TileMaxSum maxandsum;
     maxandsum.max = -INFINITY;
@@ -68,7 +68,7 @@ __global__ void ComputeRowMaxRowSumFp32Kernel(const float* __restrict__ x,
 
     // each thread processes multiple elements
     for (int col = tx * 4; col < kFeatureSize; col += blockDim.x * 4) {
-        float4 val = x4[col / 4];
+        float4 val = logits4[col / 4];
         TileMaxSum newmaxandsum;
         newmaxandsum.max = fmaxf(fmaxf(val.x, val.y), fmaxf(val.z, val.w));
         newmaxandsum.sum = __expf(val.x - newmaxandsum.max) +
@@ -103,35 +103,51 @@ __global__ void ComputeRowMaxRowSumFp32Kernel(const float* __restrict__ x,
 }
 
 /**
- * Kernel that computes softmax output using precomputed row max and sum.
+ * Kernel that computes softmax-cross-entropy gradient for each row.
  *
- * @param x device pointer to input.
+ * @param logits device pointer to input logits.
  * @param rowMax device pointer to input row max values.
  * @param rowSum device pointer to input row sum values.
- * @param softmaxOut device pointer to output.
+ * @param labels device pointer to label indices.
+ * @param gradLogits device pointer to output gradient.
  */
-__global__ void SoftmaxFp32Kernel(const float* __restrict__ x,
-                                  const float* __restrict__ rowMax,
-                                  const float* __restrict__ rowSum,
-                                  float* __restrict__ softmaxOut) {
+__global__ void SoftmaxCrossEntropyBackwardFp32Kernel(const float* __restrict__ logits,
+                                                      const float* __restrict__ rowMax,
+                                                      const float* __restrict__ rowSum,
+                                                      const int* __restrict__ labels,
+                                                      float* __restrict__ gradLogits) {
     int batchIdx = blockIdx.x;
     int tx = threadIdx.x;
-    x += batchIdx * kFeatureSize;
-    softmaxOut += batchIdx * kFeatureSize;
-    const float4* x4 = reinterpret_cast<const float4*>(x);
-    float4* out4 = reinterpret_cast<float4*>(softmaxOut);
+    logits += batchIdx * kFeatureSize;
+    gradLogits += batchIdx * kFeatureSize;
+    const float4* logits4 = reinterpret_cast<const float4*>(logits);
+    float4* grad4 = reinterpret_cast<float4*>(gradLogits);
     float maxVal = rowMax[batchIdx];
     float sumVal = rowSum[batchIdx];
+    int label = labels[batchIdx];
 
     // each thread processes multiple elements
     for (int col = tx * 4; col < kFeatureSize; col += blockDim.x * 4) {
-        float4 val = x4[col / 4];
+        float4 val = logits4[col / 4];
         float4 result;
         result.x = __expf(val.x - maxVal) / sumVal;
         result.y = __expf(val.y - maxVal) / sumVal;
         result.z = __expf(val.z - maxVal) / sumVal;
         result.w = __expf(val.w - maxVal) / sumVal;
-        out4[col / 4] = result;
+        int base = col;
+        if (label >= base && label < base + 4) {
+            int offset = label - base;
+            if (offset == 0) {
+                result.x -= 1.0f;
+            } else if (offset == 1) {
+                result.y -= 1.0f;
+            } else if (offset == 2) {
+                result.z -= 1.0f;
+            } else {
+                result.w -= 1.0f;
+            }
+        }
+        grad4[col / 4] = result;
     }
 }
 
@@ -152,20 +168,38 @@ void FillRandomUniform(float* data, int count, std::mt19937& generator, float mi
 }
 
 /**
- * Reference CPU implementation of softmax.
+ * Fills a buffer with random labels.
  *
- * @param input host pointer to input.
- * @param output host pointer to output.
+ * @param data host pointer to output buffer.
+ * @param count number of labels to fill.
+ * @param generator RNG generator.
+ * @param numClasses number of classes.
+ */
+void FillRandomLabels(int* data, int count, std::mt19937& generator, int numClasses) {
+    std::uniform_int_distribution<int> distribution(0, numClasses - 1);
+    for (int i = 0; i < count; ++i) {
+        data[i] = distribution(generator);
+    }
+}
+
+/**
+ * Reference CPU implementation for softmax cross-entropy backward.
+ *
+ * @param logits host pointer to input logits.
+ * @param labels host pointer to label indices.
+ * @param gradLogits host pointer to output gradient.
  * @param batchSize number of rows.
  * @param featureSize number of columns.
  */
-void SoftmaxCpu(const float* input, float* output, int batchSize, int featureSize) {
+void SoftmaxCrossEntropyBackwardCpu(const float* logits, const int* labels,
+                                    float* gradLogits, int batchSize, int featureSize) {
     for (int row = 0; row < batchSize; ++row) {
-        const float* rowInput = input + row * featureSize;
+        const float* rowLogits = logits + row * featureSize;
+        float* rowGrad = gradLogits + row * featureSize;
 
         float maxVal = -INFINITY;
         for (int col = 0; col < featureSize; ++col) {
-            float val = rowInput[col];
+            float val = rowLogits[col];
             if (val > maxVal) {
                 maxVal = val;
             }
@@ -173,14 +207,15 @@ void SoftmaxCpu(const float* input, float* output, int batchSize, int featureSiz
 
         float sumExp = 0.0f;
         for (int col = 0; col < featureSize; ++col) {
-            float val = rowInput[col];
-            sumExp += expf(val - maxVal);
+            sumExp += expf(rowLogits[col] - maxVal);
         }
 
         for (int col = 0; col < featureSize; ++col) {
-            float val = rowInput[col];
-            output[row * featureSize + col] = expf(val - maxVal) / sumExp;
+            rowGrad[col] = expf(rowLogits[col] - maxVal) / sumExp;
         }
+
+        int label = labels[row];
+        rowGrad[label] -= 1.0f;
     }
 }
 
@@ -216,22 +251,27 @@ int main() {
     unsigned seed = static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count());
     std::mt19937 generator(seed);
     const int totalCount = kBatchSize * kFeatureSize;
-    float* x = new float[totalCount];
-    float* resultGolden = new float[totalCount];
+    float* logits = new float[totalCount];
+    int* labels = new int[kBatchSize];
+    float* gradGolden = new float[totalCount];
 
-    FillRandomUniform(x, totalCount, generator, 0.0f, 1.0f);
-    SoftmaxCpu(x, resultGolden, kBatchSize, kFeatureSize);
+    FillRandomUniform(logits, totalCount, generator, 0.0f, 1.0f);
+    FillRandomLabels(labels, kBatchSize, generator, kFeatureSize);
+    SoftmaxCrossEntropyBackwardCpu(logits, labels, gradGolden, kBatchSize, kFeatureSize);
 
     // GPU implementation
-    float* xDevice;
-    float* resultDevice;
+    float* logitsDevice;
+    float* gradDevice;
     float* rowMaxDevice;
     float* rowSumDevice;
-    cudaMalloc(&xDevice, totalCount * sizeof(float));
-    cudaMalloc(&resultDevice, totalCount * sizeof(float));
+    int* labelsDevice;
+    cudaMalloc(&logitsDevice, totalCount * sizeof(float));
+    cudaMalloc(&gradDevice, totalCount * sizeof(float));
     cudaMalloc(&rowMaxDevice, kBatchSize * sizeof(float));
     cudaMalloc(&rowSumDevice, kBatchSize * sizeof(float));
-    cudaMemcpy(xDevice, x, totalCount * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&labelsDevice, kBatchSize * sizeof(int));
+    cudaMemcpy(logitsDevice, logits, totalCount * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(labelsDevice, labels, kBatchSize * sizeof(int), cudaMemcpyHostToDevice);
 
     // For profiling
     cudaEvent_t start, stop;
@@ -245,40 +285,45 @@ int main() {
     // warm up
     const int warmupIters = 1000;
     for (int i = 0; i < warmupIters; ++i) {
-        ComputeRowMaxRowSumFp32Kernel<<<numBlocks, numThreads>>>(xDevice, rowMaxDevice, rowSumDevice);
-        SoftmaxFp32Kernel<<<numBlocks, numThreads>>>(xDevice, rowMaxDevice, rowSumDevice, resultDevice);
+        ComputeRowMaxRowSumFp32Kernel<<<numBlocks, numThreads>>>(logitsDevice, rowMaxDevice, rowSumDevice);
+        SoftmaxCrossEntropyBackwardFp32Kernel<<<numBlocks, numThreads>>>(
+            logitsDevice, rowMaxDevice, rowSumDevice, labelsDevice, gradDevice);
     }
 
-    cudaMemset(resultDevice, 0, totalCount * sizeof(float));
+    cudaMemset(gradDevice, 0, totalCount * sizeof(float));
     // each block computes one row
     cudaEventRecord(start);
-    ComputeRowMaxRowSumFp32Kernel<<<numBlocks, numThreads>>>(xDevice, rowMaxDevice, rowSumDevice);
-    SoftmaxFp32Kernel<<<numBlocks, numThreads>>>(xDevice, rowMaxDevice, rowSumDevice, resultDevice);
+    ComputeRowMaxRowSumFp32Kernel<<<numBlocks, numThreads>>>(logitsDevice, rowMaxDevice, rowSumDevice);
+    SoftmaxCrossEntropyBackwardFp32Kernel<<<numBlocks, numThreads>>>(
+        logitsDevice, rowMaxDevice, rowSumDevice, labelsDevice, gradDevice);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedMs, start, stop);
-    std::cout << "SoftmaxFp32Kernel duration: " << elapsedMs * 1000.0f << " us" << std::endl;
+    std::cout << "SoftmaxCrossEntropyBackwardFp32Kernel duration: " << elapsedMs * 1000.0f
+              << " us" << std::endl;
 
     // copy back the result
-    float* result = new float[totalCount];
-    cudaMemcpy(result, resultDevice, totalCount * sizeof(float), cudaMemcpyDeviceToHost);
-    float error = ComputeRmse(resultGolden, result, totalCount);
-    std::cout << "SoftmaxFp32Kernel error: " << error << std::endl;
+    float* grad = new float[totalCount];
+    cudaMemcpy(grad, gradDevice, totalCount * sizeof(float), cudaMemcpyDeviceToHost);
+    float error = ComputeRmse(gradGolden, grad, totalCount);
+    std::cout << "SoftmaxCrossEntropyBackwardFp32Kernel error: " << error << std::endl;
     float reachedMemoryBandwidth =
         (static_cast<float>(totalCount) * sizeof(float) * 2) /
         (1024.0f * 1024.0f * 1024.0f * 1024.0f) /
         (elapsedMs / 1000.0f);
-    std::cout << "SoftmaxFp32Kernel reached memory bandwidth: "
+    std::cout << "SoftmaxCrossEntropyBackwardFp32Kernel reached memory bandwidth: "
               << reachedMemoryBandwidth << " TB/s" << std::endl;
 
     // Free memory
-    cudaFree(xDevice);
-    cudaFree(resultDevice);
+    cudaFree(logitsDevice);
+    cudaFree(gradDevice);
     cudaFree(rowMaxDevice);
     cudaFree(rowSumDevice);
-    delete[] result;
-    delete[] x;
-    delete[] resultGolden;
+    cudaFree(labelsDevice);
+    delete[] grad;
+    delete[] logits;
+    delete[] labels;
+    delete[] gradGolden;
 
     return 0;
 }
