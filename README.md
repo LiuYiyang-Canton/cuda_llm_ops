@@ -141,6 +141,21 @@ Chunkise implementation of Gated DeltaNet.
 </details>
 
 <details>
+<summary><strong>mHC (DeepSeek)</strong></summary>
+
+**Description**
+
+mHCSinkhornKernel: Sinkhorn-Knopp iterations for multi-hyper-connection streams.
+
+**Performance**
+
+| Kernel | Kernel Type | Input | Input Type | GPU Time (ms) | GPU Memory BW (GB/s) |
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|mHCSinkhornKernel| CUDA |`Batch = 2`<br>`SeqLen = 128K`<br>`HC Streams = 4`<br>`Iterations = 20`|fp32| 32.94 | 509.34 |
+|mHCSinkhornBackwardKernel| CUDA |`Batch = 2`<br>`SeqLen = 128K`<br>`HC Streams = 4`<br>`Iterations = 20`|fp32| 216.9 | 232.04 |
+</details>
+
+<details>
 <summary><strong>ReduceSum</strong></summary>
 
 **Description**
