@@ -109,7 +109,8 @@ Computes LayerNorm along the hidden dimension.
 
 | Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
-|layernorm_fp32_kernel| CUDA |`(4096,7168)`|fp32|  368.64 | 0.57949 |
+|LayerNormKernel| CUDA |`BATCH = 1`<br>`SEQLEN = 4K`<br>`HIDDEN = 7168`|fp32|  368.64 | 0.57949 |
+|LayerNormBackwardKernel| CUDA |`BATCH = 1`<br>`SEQLEN = 128K`<br>`HIDDEN = 2048`|fp32| 6405.992 | 0.655 |
 </details>
 
 <details>
@@ -180,9 +181,10 @@ Computes RMSNorm along the hidden dimension.
 
 **Performance**
 
-| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
+| Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (GB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
-|rmsnorm_fp32_kernel| CUDA |`(4096,7168)`|fp32|  370.688 | 0.576288 |
+|RMSNormKernel| CUDA |`BATCH = 1`<br>`SEQLEN = 4K`<br>`HIDDEN = 7168`|fp32|  370.688 | 576.288 |
+|RMSNormBackwardKernel| CUDA |`BATCH = 1`<br>`SEQLEN = 128K`<br>`HIDDEN = 2048`|fp32| 6497.6 | 661.089 |
 </details>
 
 <details>

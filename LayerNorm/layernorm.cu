@@ -1,187 +1,251 @@
-// CUDA implementation of LayerNorm
-// Compilation command: nvcc -o layernorm -gencode=arch=compute_120,code=sm_120 -O3 layernorm.cu 
-#include <cuda_runtime.h>
-#include <iostream>
-#include <cmath>
+// ==============================================================================
+// Author: Liu Yiyang
+// Date:   2026-01-25
+// Purpose: CUDA kernel and CPU reference for LayerNorm forward.
+// Build:  nvcc -gencode=arch=compute_120,code=sm_120 -O3 -o layernorm layernorm.cu
+// ==============================================================================
+
 #include <cassert>
+#include <cmath>
+#include <cuda_runtime.h>
+#include <chrono>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <iostream>
 #include <random>
-#include <chrono>
 
-#define CEIL_DIV(a, b) ((a) + (b) - 1) / (b)
+namespace cg = cooperative_groups;
 
-#define SEQLEN 4096
-#define HIDDEN_SIZE 7168
-#define eps 1e-6f
+constexpr int kSeqLength = 4096;
+constexpr int kHiddenSize = 7168;
+constexpr float kEpsilon = 1.0e-6f;
+constexpr int kThreadsPerBlock = 256;
+constexpr int kWarpSize = 32;
+constexpr int kBlockNumWarps = kThreadsPerBlock / kWarpSize;
 
-#define BLOCK_THREAD_NUM 256
-#define WORK_PER_THREAD CEIL_DIV(HIDDEN_SIZE, BLOCK_THREAD_NUM)
-#define WARP_SIZE 32
-#define BLOCK_NUM_WARPS (BLOCK_THREAD_NUM / WARP_SIZE)
+/**
+ * @brief Computes LayerNorm forward for a batch, one hidden-dimension row per block.
+ * @param x Input tensor with shape (seqLength, hiddenSize).
+ * @param weight Weight vector with shape (hiddenSize).
+ * @param layernormOut Output tensor with shape (seqLength, hiddenSize).
+ */
+__global__ void LayerNormFp32Kernel(const float* __restrict__ x,
+                                    const float* __restrict__ weight,
+                                    float* __restrict__ layernormOut) {
+    auto warp = cg::tiled_partition<kWarpSize>(cg::this_thread_block());
+    const int threadId = threadIdx.x;
+    const int laneId = threadId % kWarpSize;
+    __shared__ float2 warpSum[kBlockNumWarps];
 
-// each thread block handles one row
-__global__ void layernorm_fp32_kernel(const float* __restrict__ x, const float* __restrict__ weight, float* __restrict__ rmsnorm_out) {
-    auto warp = cooperative_groups::tiled_partition<32>(cooperative_groups::this_thread_block());
-    int tx = threadIdx.x;
-    int laneID = tx % 32;
-    __shared__ float2 warpSum[BLOCK_NUM_WARPS];
+    const int rowIndex = blockIdx.x;
+    const int rowOffset = rowIndex * kHiddenSize;
+    x += rowOffset;
 
-    int rowIndex = blockIdx.x;
-    x += rowIndex * HIDDEN_SIZE;
-
-    // sum of squares per thread
-    float sum_sq = 0.0f;
+    float sumSq = 0.0f;
     float sum = 0.0f;
 
 #pragma unroll
-    for (int i = tx * 4; i < HIDDEN_SIZE; i += blockDim.x * 4) {
-        if (i + 3 < HIDDEN_SIZE) {
-            float4 temp = *(float4*)&x[i];
-            sum_sq += temp.x * temp.x + temp.y * temp.y + temp.z * temp.z + temp.w * temp.w;
+    for (int i = threadId * 4; i < kHiddenSize; i += blockDim.x * 4) {
+        if (i + 3 < kHiddenSize) {
+            const float4 temp = *(reinterpret_cast<const float4*>(&x[i]));
+            sumSq += temp.x * temp.x + temp.y * temp.y + temp.z * temp.z + temp.w * temp.w;
             sum += temp.x + temp.y + temp.z + temp.w;
         } else {
-            for (int j = i; j < HIDDEN_SIZE; ++j) {
-                float val = x[j];
-                sum_sq += val * val;
+            for (int j = i; j < kHiddenSize; ++j) {
+                const float val = x[j];
+                sumSq += val * val;
                 sum += val;
             }
         }
     }
 
-    // sum of squares per warp
-    sum_sq = cooperative_groups::reduce(warp, sum_sq, cooperative_groups::plus<float>());
-    sum = cooperative_groups::reduce(warp, sum, cooperative_groups::plus<float>());
-    if (laneID == 0) {
-        warpSum[tx / WARP_SIZE].x = sum_sq;
-        warpSum[tx / WARP_SIZE].y = sum;
+    sumSq = cg::reduce(warp, sumSq, cg::plus<float>());
+    sum = cg::reduce(warp, sum, cg::plus<float>());
+    if (laneId == 0) {
+        warpSum[threadId / kWarpSize].x = sumSq;
+        warpSum[threadId / kWarpSize].y = sum;
     }
     __syncthreads();
-    // sum of squares per block
-    for (int offset = 0; offset < BLOCK_NUM_WARPS; ++offset) {
-        if (tx < offset) {
-            warpSum[tx].x += warpSum[offset].x;
-            warpSum[tx].y += warpSum[offset].y;
+
+    for (int offset = 0; offset < kBlockNumWarps; ++offset) {
+        if (threadId < offset) {
+            warpSum[threadId].x += warpSum[offset].x;
+            warpSum[threadId].y += warpSum[offset].y;
         }
         __syncthreads();
     }
 
-    sum_sq = warpSum[0].x;
-    float avg = warpSum[0].y / HIDDEN_SIZE;
+    const float avg = warpSum[0].y / static_cast<float>(kHiddenSize);
+    const float invRms = rsqrtf(warpSum[0].x / static_cast<float>(kHiddenSize) - avg * avg + kEpsilon);
 
-    // we compute reverse sqrt here to save some computation in the next step
-    float rms = rsqrtf(sum_sq / HIDDEN_SIZE - avg * avg + eps);
-
-    // write output
 #pragma unroll
-    for (int i = tx * 4; i < HIDDEN_SIZE; i += blockDim.x * 4) {
-        if (i + 3 < HIDDEN_SIZE) {
-            float4 val = *(float4*)&x[i];
-            float4 w = *(float4*)&weight[i];
-            val.x = (val.x  - avg) * rms * w.x;
-            val.y = (val.y  - avg) * rms * w.y;
-            val.z = (val.z  - avg) * rms * w.z;
-            val.w = (val.w  - avg) * rms * w.w;
-            *(float4*)&rmsnorm_out[rowIndex * HIDDEN_SIZE + i] = val;
+    for (int i = threadId * 4; i < kHiddenSize; i += blockDim.x * 4) {
+        if (i + 3 < kHiddenSize) {
+            float4 val = *(reinterpret_cast<const float4*>(&x[i]));
+            const float4 w = *(reinterpret_cast<const float4*>(&weight[i]));
+            val.x = (val.x - avg) * invRms * w.x;
+            val.y = (val.y - avg) * invRms * w.y;
+            val.z = (val.z - avg) * invRms * w.z;
+            val.w = (val.w - avg) * invRms * w.w;
+            *(reinterpret_cast<float4*>(&layernormOut[rowOffset + i])) = val;
         } else {
-            for (int j = i; j < HIDDEN_SIZE; ++j) {
-                rmsnorm_out[rowIndex * HIDDEN_SIZE + j] = (x[j] - avg) * rms * weight[j];
+            for (int j = i; j < kHiddenSize; ++j) {
+                layernormOut[rowOffset + j] = (x[j] - avg) * invRms * weight[j];
             }
         }
     }
 }
 
-float ComputeRMSE(const float* __restrict__ golden, const float* __restrict x, size_t numElements) {
-    float error = 0;
-    float norm = 0;
-    for (int i = 0; i < numElements; ++i) {
-        error += (golden[i] - x[i]) * (golden[i] - x[i]);
-        norm += golden[i] * golden[i];
+/**
+ * @brief Computes LayerNorm forward on CPU for validation.
+ * @param x Input tensor with shape (seqLength, hiddenSize).
+ * @param weight Weight vector with shape (hiddenSize).
+ * @param layernormOut Output tensor with shape (seqLength, hiddenSize).
+ * @param seqLength Number of rows in the input.
+ * @param hiddenSize Hidden dimension size.
+ * @param epsilon Epsilon added to the variance before sqrt.
+ */
+void LayerNormForwardCpu(const float* x,
+                         const float* weight,
+                         float* layernormOut,
+                         int seqLength,
+                         int hiddenSize,
+                         float epsilon) {
+    const float invHiddenSize = 1.0f / static_cast<float>(hiddenSize);
+    for (int row = 0; row < seqLength; ++row) {
+        const float* rowPtr = x + row * hiddenSize;
+        float* outPtr = layernormOut + row * hiddenSize;
+        float sum = 0.0f;
+        for (int col = 0; col < hiddenSize; ++col) {
+            sum += rowPtr[col];
+        }
+        const float avg = sum * invHiddenSize;
+        float sumSq = 0.0f;
+        for (int col = 0; col < hiddenSize; ++col) {
+            const float diff = rowPtr[col] - avg;
+            sumSq += diff * diff;
+        }
+        const float invRms = 1.0f / std::sqrt(sumSq * invHiddenSize + epsilon);
+        for (int col = 0; col < hiddenSize; ++col) {
+            outPtr[col] = (rowPtr[col] - avg) * invRms * weight[col];
+        }
     }
-    return std::sqrt(error) / std::sqrt(norm);
 }
 
+/**
+ * @brief Fills a buffer with random uniform values in [minValue, maxValue).
+ * @param data Output buffer to fill.
+ * @param count Number of elements to generate.
+ * @param generator Random generator to use.
+ * @param minValue Lower bound of the uniform distribution.
+ * @param maxValue Upper bound of the uniform distribution.
+ */
+void FillRandomUniform(float* data,
+                       size_t count,
+                       std::mt19937& generator,
+                       float minValue,
+                       float maxValue) {
+    std::uniform_real_distribution<float> distribution(minValue, maxValue);
+    for (size_t i = 0; i < count; ++i) {
+        data[i] = distribution(generator);
+    }
+}
 
+/**
+ * @brief Computes RMSE between reference and computed buffers.
+ * @param reference Reference data on host.
+ * @param values Computed data on host.
+ * @param count Number of fp32 elements to compare.
+ * @return RMSE value in fp32.
+ */
+float ComputeRmse(const float* reference, const float* values, size_t count) {
+    double error = 0.0;
+    double norm = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        const double diff = static_cast<double>(reference[i]) - static_cast<double>(values[i]);
+        error += diff * diff;
+        norm += static_cast<double>(reference[i]) * static_cast<double>(reference[i]);
+    }
+    if (norm == 0.0) {
+        return 0.0f;
+    }
+    return static_cast<float>(std::sqrt(error) / std::sqrt(norm));
+}
+
+/**
+ * @brief Entry point that runs LayerNorm forward on CPU/GPU and reports metrics.
+ * @return 0 on success, non-zero on failure.
+ */
 int main() {
-    assert(HIDDEN_SIZE % 4 == 0); // for float4 load/store
-    // decalre the uniform random number generator
-    unsigned seed = std::chrono::steady_clock::now().time_since_epoch().count();
+    assert((kHiddenSize % 4) == 0);
+
+    const size_t elementCount = static_cast<size_t>(kSeqLength) * static_cast<size_t>(kHiddenSize);
+    const size_t elementBytes = elementCount * sizeof(float);
+
+    float* x = new float[elementCount];
+    float* weight = new float[kHiddenSize];
+    float* layernormGolden = new float[elementCount];
+    float* layernormOut = new float[elementCount];
+
+    const unsigned int seed =
+        static_cast<unsigned int>(std::chrono::steady_clock::now().time_since_epoch().count());
     std::mt19937 generator(seed);
-    std::uniform_real_distribution<float> distribution(0.0, 1.0);
+    FillRandomUniform(x, elementCount, generator, 0.0f, 1.0f);
+    FillRandomUniform(weight, kHiddenSize, generator, 0.0f, 1.0f);
 
+    LayerNormForwardCpu(x, weight, layernormGolden, kSeqLength, kHiddenSize, kEpsilon);
 
-    float* x = new float[SEQLEN * HIDDEN_SIZE];
-    float* weight = new float[HIDDEN_SIZE];
-    float* rmsnormGolden = new float[SEQLEN * HIDDEN_SIZE];
-    float* rmsnormOut = new float[SEQLEN * HIDDEN_SIZE];
+    float* xDevice = nullptr;
+    float* weightDevice = nullptr;
+    float* layernormOutDevice = nullptr;
+    cudaMalloc(reinterpret_cast<void**>(&xDevice), elementBytes);
+    cudaMalloc(reinterpret_cast<void**>(&weightDevice), kHiddenSize * sizeof(float));
+    cudaMalloc(reinterpret_cast<void**>(&layernormOutDevice), elementBytes);
+    cudaMemcpy(xDevice, x, elementBytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(weightDevice, weight, kHiddenSize * sizeof(float), cudaMemcpyHostToDevice);
 
-    for (int i = 0; i < SEQLEN * HIDDEN_SIZE; ++i) {
-        x[i] = distribution(generator);
-    }
-    for (int i = 0; i < HIDDEN_SIZE; ++i) {
-        weight[i] = distribution(generator);
-    }
-
-    // CPU implementation
-    for (int row = 0; row < SEQLEN; ++row) {
-        float avg = 0.0;
-        for (int col = 0; col < HIDDEN_SIZE; ++col) {
-            avg += x[row * HIDDEN_SIZE + col];
-        }
-        avg /= HIDDEN_SIZE;
-        float sum_sq = 0.0f;
-        for (int col = 0; col < HIDDEN_SIZE; ++col) {
-            float val = x[row * HIDDEN_SIZE + col];
-            sum_sq += (val - avg) * (val - avg);
-        }
-        float rms = rsqrtf(sum_sq / HIDDEN_SIZE + eps);
-        for (int col = 0; col < HIDDEN_SIZE; ++col) {
-            rmsnormGolden[row * HIDDEN_SIZE + col] = (x[row * HIDDEN_SIZE + col] - avg) * rms * weight[col];
-        }
-    }
-
-    // GPU implementation
-    float *xDevice, *weightDevice, *rmsnorm_outDevice;
-    cudaMalloc((void**)&xDevice, SEQLEN * HIDDEN_SIZE * sizeof(float));
-    cudaMalloc((void**)&weightDevice, HIDDEN_SIZE * sizeof(float));
-    cudaMalloc((void**)&rmsnorm_outDevice, SEQLEN * HIDDEN_SIZE * sizeof(float));
-    cudaMemcpy(xDevice, x, SEQLEN * HIDDEN_SIZE * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(weightDevice, weight, HIDDEN_SIZE * sizeof(float), cudaMemcpyHostToDevice);
-
-    // For profiling
-    cudaEvent_t start, stop;
-    float elapsedTime;
+    cudaEvent_t start;
+    cudaEvent_t stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    dim3 numThreads(256);
-    dim3 numBlocks(SEQLEN);
+    const dim3 numThreads(kThreadsPerBlock);
+    const dim3 numBlocks(kSeqLength);
 
-    // warm up
-    for (int i = 0; i < 1000; ++i) {
-        layernorm_fp32_kernel<<<numBlocks, numThreads>>>(xDevice, weightDevice, rmsnorm_outDevice);
+    const int kWarmupRuns = 1000;
+    const int kTimedRuns = 1;
+    for (int i = 0; i < kWarmupRuns; ++i) {
+        LayerNormFp32Kernel<<<numBlocks, numThreads>>>(xDevice, weightDevice, layernormOutDevice);
     }
 
     cudaEventRecord(start);
-    layernorm_fp32_kernel<<<numBlocks, numThreads>>>(xDevice, weightDevice, rmsnorm_outDevice);
+    for (int i = 0; i < kTimedRuns; ++i) {
+        LayerNormFp32Kernel<<<numBlocks, numThreads>>>(xDevice, weightDevice, layernormOutDevice);
+    }
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&elapsedTime, start, stop);
-    std::cout << "rmsnorm_fp32_kernel elapsed time: " << elapsedTime * 1000 << " us" << std::endl;
-    float reached_mem_bw = (SEQLEN * HIDDEN_SIZE * sizeof(float) * 2) / ((float)1024 * 1024 * 1024 * 1024) / (elapsedTime / 1000.0f);
-    std::cout << "rmsnorm_fp32_kernel reached memory bandwidth: " << reached_mem_bw << " TB/s" << std::endl;
 
-    cudaMemcpy(rmsnormOut, rmsnorm_outDevice, SEQLEN * HIDDEN_SIZE * sizeof(float), cudaMemcpyDeviceToHost);
+    float elapsedMs = 0.0f;
+    cudaEventElapsedTime(&elapsedMs, start, stop);
+    const float avgUs = (elapsedMs * 1000.0f) / static_cast<float>(kTimedRuns);
+    std::cout << "LayerNormFp32Kernel avg time: " << avgUs << " us" << std::endl;
+    const double reachedMemBwTb =
+        (static_cast<double>(elementBytes) * 2.0) / (1024.0 * 1024.0 * 1024.0 * 1024.0) /
+        (elapsedMs / 1000.0f);
+    std::cout << "LayerNormFp32Kernel reached memory bandwidth: " << reachedMemBwTb << " TB/s"
+              << std::endl;
 
-    float error = ComputeRMSE(rmsnormGolden, rmsnormOut, SEQLEN * HIDDEN_SIZE);
-    std::cout << "rmsnorm_fp32_kernel error: " << error << std::endl;
+    cudaMemcpy(layernormOut, layernormOutDevice, elementBytes, cudaMemcpyDeviceToHost);
 
-    // clean up
+    const float error = ComputeRmse(layernormGolden, layernormOut, elementCount);
+    std::cout << "LayerNormFp32Kernel RMSE: " << error << std::endl;
+
     cudaFree(xDevice);
     cudaFree(weightDevice);
-    cudaFree(rmsnorm_outDevice);
+    cudaFree(layernormOutDevice);
     delete[] x;
-    delete[] rmsnormGolden;
-    delete[] rmsnormOut;
+    delete[] weight;
+    delete[] layernormGolden;
+    delete[] layernormOut;
     return 0;
 }
