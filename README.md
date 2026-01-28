@@ -94,8 +94,7 @@ FlashGQA for inference.
 
 | Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) |
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
-|infer_flash_gqa_bf16_kernel| CUDA |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1825.86 | 0.503382 |
-|infer_flash_gqa_bf16_kernel| Triton |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1850.12 | 0.496780 |
+|infer_flash_gqa_bf16_kernel| Triton |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1320 | 0.696291 |
 </details>
 
 <details>
@@ -150,10 +149,10 @@ mHCSinkhornKernel: Sinkhorn-Knopp iterations for multi-hyper-connection streams.
 
 **Performance**
 
-| Kernel | Kernel Type | Input | Input Type | GPU Time (ms) | GPU Memory BW (GB/s) |
+| Kernel | Kernel Type | Input | Input Type | GPU Time (us) | GPU Memory BW (GB/s) |
 | :--- | :--- | :--- |:--- |:--- |:--- |
 |mHCSinkhornKernel| CUDA |`Batch = 2`<br>`SeqLen = 128K`<br>`HC Streams = 4`<br>`Iterations = 20`|fp32| 32.94 | 509.34 |
-|mHCSinkhornBackwardKernel| CUDA |`Batch = 2`<br>`SeqLen = 128K`<br>`HC Streams = 4`<br>`Iterations = 20`|fp32| 216.9 | 232.04 |
+|mHCSinkhornBackwardKernel| CUDA |`Batch = 2`<br>`SeqLen = 128K`<br>`HC Streams = 4`<br>`Iterations = 20`|fp32| 111.2 | 452.44 |
 </details>
 
 <details>
@@ -227,7 +226,7 @@ Fused softmax + cross-entropy loss.
 
 | Kernel | Kernel Type | Input Shape | Input Type |GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |
-|SoftmaxCrossEntropy| CUDA |`(32, 131072)`|fp32|   44.00 | 0.346 |
+|SoftmaxCrossEntropy| CUDA |`(32, 131072)`|fp32|   37.6 | 0.415 |
 |SoftmaxCrossEntropyBackward| CUDA |`(32, 131072)`|fp32|   34.816 | 0.342 |
 </details>
 
@@ -270,8 +269,9 @@ Radix Select + Blelloch Scan.
 ## 🚀 <span style="color:#ffb600;">Quick Start</span>
 
 ```bash
-nvcc -o softmax.o -gencode=arch=compute_120,code=sm_120 -O3 Softmax/softmax.cu
-./softmax.o
+cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=120
+cmake --build build -j
+./build/examples/test_elementwiseadd.o
 ```
 
 <hr style="border:0;height:1px;background:#ffb600;margin:32px 0;">
