@@ -1,7 +1,7 @@
 // ==============================================================================
 // Author: Liu Yiyang
 // Date:   2026-01-29
-// Purpose: CUDA test for FlashGQA kernel.
+// Purpose: CUDA test for FlashGQA decoding phase of inference kernel.
 // ==============================================================================
 
 #include "cuda_llm_ops.h"
@@ -17,7 +17,7 @@
 
 using bf16_t = __nv_bfloat16;
 
-// Model and kernel configuration (must match src/flash_gqa_kernel.cu).
+// Model and kernel configuration (must match src/cplusplus/FlashGQA/decode_flash_gqa_kernel.cu).
 #define NUM_QUERY_HEADS 128
 #define NUM_KV_HEADS 8
 #define GROUP_SIZE ((NUM_QUERY_HEADS) / (NUM_KV_HEADS))
@@ -307,16 +307,16 @@ int main() {
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsedTime, start, stop);
-    std::cout << "infer_flash_gqa_bf16_kernel elapsed time: " << elapsedTime * 1000 << " us" << std::endl;
+    std::cout << "decode_flash_gqa_bf16_kernel elapsed time: " << elapsedTime * 1000 << " us" << std::endl;
     float reached_mem_bw =
         (kFlashBatchSize * NUM_QUERY_HEADS * HEAD_DIM * sizeof(bf16_t) + kFlashBatchSize * kFlashSeqLength * NUM_KV_HEADS * HEAD_DIM *
                                                                            sizeof(bf16_t) +
          kFlashBatchSize * kFlashSeqLength * NUM_KV_HEADS * HEAD_DIM * sizeof(bf16_t) +
          kFlashBatchSize * NUM_QUERY_HEADS * HEAD_DIM * sizeof(bf16_t)) /
         ((float)1024 * 1024 * 1024 * 1024) / (elapsedTime / 1000);
-    std::cout << "infer_flash_gqa_bf16_kernel reached_mem_bw: " << reached_mem_bw << " TB/s" << std::endl;
+    std::cout << "decode_flash_gqa_bf16_kernel reached_mem_bw: " << reached_mem_bw << " TB/s" << std::endl;
     float peakTFLOPS = ((float)kFlashBatchSize * NUM_QUERY_HEADS * HEAD_DIM * kFlashSeqLength) * 2 / 1e12 / (elapsedTime / 1e3);
-    std::cout << "infer_flash_gqa_bf16_kernel peak TFLOPS: " << peakTFLOPS << " TFLOPS" << std::endl;
+    std::cout << "decode_flash_gqa_bf16_kernel peak TFLOPS: " << peakTFLOPS << " TFLOPS" << std::endl;
 
     bf16_t* OHost = new bf16_t[kFlashBatchSize * NUM_QUERY_HEADS * HEAD_DIM];
     cudaMemcpy(OHost, ODevice, kFlashBatchSize * NUM_QUERY_HEADS * HEAD_DIM * sizeof(bf16_t), cudaMemcpyDeviceToHost);

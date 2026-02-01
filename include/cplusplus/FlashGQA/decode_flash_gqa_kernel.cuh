@@ -1,7 +1,7 @@
 // ==============================================================================
 // Author: Liu Yiyang
 // Date:   2026-01-29
-// Purpose: CUDA kernel declarations for FlashGQA.
+// Purpose: CUDA kernel declarations for FlashGQA decoding phase of inference.
 // ==============================================================================
 #pragma once
 
@@ -12,7 +12,7 @@
 constexpr int WARP_SIZE = 32;
 
 /**
- * @brief Launches the FlashGQA bf16 kernel.
+ * @brief Launches the FlashGQA bf16 decoding kernel.
  * @param q Pointer to device query tensor.
  * @param k Pointer to device key tensor.
  * @param v Pointer to device value tensor.

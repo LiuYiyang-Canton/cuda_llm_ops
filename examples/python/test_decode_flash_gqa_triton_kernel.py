@@ -1,9 +1,9 @@
 # ==============================================================================
 # Author: Liu Yiyang
 # Date:   2026-01-30
-# Purpose: Accuracy and performance tests for Flash GQA Triton kernel.
+# Purpose: Accuracy and performance tests for Flash GQA decoding Triton kernel.
 # ==============================================================================
-"""Tests for the Flash GQA Triton kernel."""
+"""Tests for the Flash GQA decoding Triton kernel."""
 
 import math
 import os
@@ -17,9 +17,9 @@ python_src_dir = os.path.join(repo_root, "src", "python")
 if python_src_dir not in sys.path:
     sys.path.append(python_src_dir)
 
-from infer_flash_gqa_triton_kernel import (  # noqa: E402
-    infer_flash_gqa_bf16_kernel,
-    launch_infer_flash_gqa_bf16_kernel,
+from decode_flash_gqa_triton_kernel import (  # noqa: E402
+    decode_flash_gqa_bf16_kernel,
+    launch_decode_flash_gqa_bf16_kernel,
 )
 
 
@@ -117,7 +117,7 @@ def benchmark_torch_flash_gqa(q, k, v, out, warmup, rep):
 
 def benchmark_triton_flash_gqa(q, k, v, out, warmup, rep):
     """
-    Benchmark the Triton Flash GQA kernel.
+    Benchmark the Triton Flash GQA decoding kernel.
 
     Main feature:
         Measures Triton kernel latency using autotuned configurations.
@@ -138,7 +138,7 @@ def benchmark_triton_flash_gqa(q, k, v, out, warmup, rep):
         Run the Triton kernel for benchmarking.
 
         Main feature:
-            Launches the Triton Flash GQA kernel.
+        Launches the Triton Flash GQA decoding kernel.
 
         Inputs:
             None
@@ -146,7 +146,7 @@ def benchmark_triton_flash_gqa(q, k, v, out, warmup, rep):
         Outputs:
             None
         """
-        launch_infer_flash_gqa_bf16_kernel(q, k, v, out)
+        launch_decode_flash_gqa_bf16_kernel(q, k, v, out)
 
     return triton.testing.do_bench(op, warmup=warmup, rep=rep)
 
@@ -196,7 +196,7 @@ def bytes_accessed(q, k, v, o):
 
 def run_tests(run_kernel=True, warmup=100, rep=100):
     """
-    Validate and benchmark Flash GQA on a single batch.
+    Validate and benchmark Flash GQA decoding on a single batch.
 
     Main feature:
         Runs reference and Triton paths and reports bandwidth.
@@ -228,7 +228,7 @@ def run_tests(run_kernel=True, warmup=100, rep=100):
 
     ref = flash_gqa_reference(q, k, v)
     if not run_kernel:
-        print("Flash GQA Triton kernel ready; set run_kernel=True to run benchmarks.")
+        print("Flash GQA decoding Triton kernel ready; set run_kernel=True to run benchmarks.")
         return
 
     torch_ms = benchmark_torch_flash_gqa(q, k, v, out, warmup=warmup, rep=rep)
@@ -236,19 +236,19 @@ def run_tests(run_kernel=True, warmup=100, rep=100):
     triton_ms = None
     if device.type == "cuda":
         triton_ms = benchmark_triton_flash_gqa(q, k, v, out, warmup=warmup, rep=rep)
-        _ = launch_infer_flash_gqa_bf16_kernel(q, k, v, out)
+        _ = launch_decode_flash_gqa_bf16_kernel(q, k, v, out)
     else:
         print("Triton benchmark skipped (CPU fallback).")
 
     err = relative_error(ref, out)
     moved_bytes = bytes_accessed(q, k, v, out)
-    print(f"infer_flash_gqa_bf16_kernel relative error: {err:.3e}")
+    print(f"decode_flash_gqa_bf16_kernel relative error: {err:.3e}")
     torch_bw = moved_bytes / (torch_ms * 1e-3) / (1024 ** 4)
     print(f"PyTorch reference: {torch_ms:.5f} ms | approx. bandwidth: {torch_bw:.6f} TB/s")
     if triton_ms is not None:
         triton_bw = moved_bytes / (triton_ms * 1e-3) / (1024 ** 4)
-        print(f"Triton Flash GQA: {triton_ms:.5f} ms | approx. bandwidth: {triton_bw:.6f} TB/s")
-        best_cfg = getattr(infer_flash_gqa_bf16_kernel, "best_config", None)
+        print(f"Triton Flash GQA decoding: {triton_ms:.5f} ms | approx. bandwidth: {triton_bw:.6f} TB/s")
+        best_cfg = getattr(decode_flash_gqa_bf16_kernel, "best_config", None)
         if best_cfg is not None:
             print(f"Triton autotune best config: {best_cfg}")
 
