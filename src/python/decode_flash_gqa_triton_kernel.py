@@ -1,9 +1,9 @@
 # ==============================================================================
 # Author: Liu Yiyang
 # Date:   2026-01-30
-# Purpose: Triton Flash GQA kernel and launch wrapper.
+# Purpose: Triton Flash GQA decoding kernel and launch wrapper.
 # ==============================================================================
-"""Triton Flash GQA kernel and launch wrapper."""
+"""Triton Flash GQA decoding kernel and launch wrapper."""
 
 import functools
 import math
@@ -25,7 +25,7 @@ import triton.language as tl
     key=["q_heads"],
 )
 @triton.jit
-def infer_flash_gqa_bf16_kernel(
+def decode_flash_gqa_bf16_kernel(
     q_ptr,
     k_ptr,
     v_ptr,
@@ -41,10 +41,10 @@ def infer_flash_gqa_bf16_kernel(
     num_kv_heads: tl.constexpr,
 ):
     """
-    Compute grouped query attention on bf16 inputs with fp32 accumulation.
+    Compute grouped query attention for decoding on bf16 inputs with fp32 accumulation.
 
     Main feature:
-        Computes streaming softmax attention for grouped query heads.
+        Computes streaming softmax attention for grouped query heads during decoding.
 
     Inputs:
         q_ptr: pointer to bf16 with shape [batch, q_heads, seqlen_q, head_dim]
@@ -113,9 +113,9 @@ def infer_flash_gqa_bf16_kernel(
         tl.store(o_ptrs, o_vals.to(tl.bfloat16), mask=head_mask[:, None])
 
 
-def infer_flash_gqa_bf16_grid(meta, num_kv_heads, batch):
+def decode_flash_gqa_bf16_grid(meta, num_kv_heads, batch):
     """
-    Compute the Triton grid for Flash GQA.
+    Compute the Triton grid for Flash GQA decoding.
 
     Main feature:
         Computes a 2D grid over KV head tiles and batch.
@@ -134,9 +134,9 @@ def infer_flash_gqa_bf16_grid(meta, num_kv_heads, batch):
     )
 
 
-def launch_infer_flash_gqa_bf16_kernel(q, k, v, out=None):
+def launch_decode_flash_gqa_bf16_kernel(q, k, v, out=None):
     """
-    Launch the Triton Flash GQA kernel on bf16 tensors.
+    Launch the Triton Flash GQA decoding kernel on bf16 tensors.
 
     Main feature:
         Validates inputs, computes launch parameters, and dispatches Triton.
@@ -151,9 +151,9 @@ def launch_infer_flash_gqa_bf16_kernel(q, k, v, out=None):
         out: torch.Tensor bf16 of shape [batch, q_heads, seqlen_q, head_dim]
     """
     if q.dtype != torch.bfloat16 or k.dtype != torch.bfloat16 or v.dtype != torch.bfloat16:
-        raise ValueError("Flash GQA expects bf16 inputs")
+        raise ValueError("Flash GQA decoding expects bf16 inputs")
     if not (q.is_contiguous() and k.is_contiguous() and v.is_contiguous()):
-        raise ValueError("Flash GQA kernel expects contiguous Q/K/V tensors")
+        raise ValueError("Flash GQA decoding kernel expects contiguous Q/K/V tensors")
 
     batch, q_heads, seqlen_q, head_dim = q.shape
     k_batch, num_kv_heads, seqlen_kv, k_head_dim = k.shape
@@ -178,9 +178,9 @@ def launch_infer_flash_gqa_bf16_kernel(q, k, v, out=None):
         raise ValueError("Output tensor must be contiguous")
 
     scale = 1.0 / math.sqrt(head_dim)
-    grid = functools.partial(infer_flash_gqa_bf16_grid, num_kv_heads=num_kv_heads, batch=batch)
+    grid = functools.partial(decode_flash_gqa_bf16_grid, num_kv_heads=num_kv_heads, batch=batch)
 
-    infer_flash_gqa_bf16_kernel[grid](
+    decode_flash_gqa_bf16_kernel[grid](
         q,
         k,
         v,

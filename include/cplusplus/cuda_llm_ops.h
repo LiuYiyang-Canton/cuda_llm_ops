@@ -7,7 +7,7 @@
 
 #include "ElementwiseAdd/elementwiseadd_kernel.cuh"
 #include "EngramHash/engram_hash_kernel.h"
-#include "FlashGQA/flash_gqa_kernel.cuh"
+#include "FlashGQA/decode_flash_gqa_kernel.cuh"
 #include "GEMM/gemm_fp16_kernel.cuh"
 #include "GLU/glu_bf16_kernel.cuh"
 #include "LayerNorm/layernorm_backward_kernel.cuh"

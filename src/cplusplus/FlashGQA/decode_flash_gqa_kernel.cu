@@ -1,9 +1,9 @@
 // ==============================================================================
 // Author: Liu Yiyang
 // Date:   2026-01-29
-// Purpose: CUDA kernel implementation for FlashGQA.
+// Purpose: CUDA kernel implementation for FlashGQA decoding phase of inference.
 // ==============================================================================
-#include "FlashGQA/flash_gqa_kernel.cuh"
+#include "FlashGQA/decode_flash_gqa_kernel.cuh"
 
 #include <algorithm>
 #include <cmath>
@@ -103,7 +103,7 @@ namespace cg = cooperative_groups;
 #define UPDATE_O_NUM_ROWS_PER_WARP (MM2_BLOCK_M / BLOCK_NUM_WARPS)
 
 /**
- * @brief FlashGQA kernel for bf16 inputs/outputs with fp32 accumulation.
+ * @brief FlashGQA decoding kernel for bf16 inputs/outputs with fp32 accumulation.
  * @param Q Pointer to query tensor.
  * @param K Pointer to key tensor.
  * @param V Pointer to value tensor.
@@ -116,7 +116,7 @@ namespace cg = cooperative_groups;
  * @param numKvHeads Number of KV heads.
  * @param headDim Per-head embedding dimension.
  */
-__global__ void infer_flash_gqa_bf16_kernel(const bf16_t* __restrict__ Q,
+__global__ void decode_flash_gqa_bf16_kernel(const bf16_t* __restrict__ Q,
                                             const bf16_t* __restrict__ K,
                                             const bf16_t* __restrict__ V,
                                             float scale,
@@ -389,7 +389,7 @@ __global__ void infer_flash_gqa_bf16_kernel(const bf16_t* __restrict__ Q,
 }
 
 /**
- * @brief Launches the FlashGQA bf16 kernel.
+ * @brief Launches the FlashGQA bf16 decoding kernel.
  * @param q Pointer to device query tensor.
  * @param k Pointer to device key tensor.
  * @param v Pointer to device value tensor.
@@ -451,12 +451,12 @@ void LaunchFlashGqaBf16Kernel(const bf16_t* q,
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, 0);
     if (shmemBytes > deviceProp.sharedMemPerBlock) {
-        cudaFuncSetAttribute(infer_flash_gqa_bf16_kernel,
+        cudaFuncSetAttribute(decode_flash_gqa_bf16_kernel,
                              cudaFuncAttributeMaxDynamicSharedMemorySize,
                              static_cast<int>(shmemBytes));
     }
 
-    infer_flash_gqa_bf16_kernel<<<numBlocks, numThreads, shmemBytes>>>(q,
+    decode_flash_gqa_bf16_kernel<<<numBlocks, numThreads, shmemBytes>>>(q,
                                                                        k,
                                                                        v,
                                                                        scale,

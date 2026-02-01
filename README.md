@@ -88,13 +88,33 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 
 **Description**
 
-FlashGQA for inference.
+- `decode_flash_gqa_bf16_kernel`: decoding phase of inference.
+- `flash_gqa_forward_bf16_kernel`: prefill phase of inference or training.
 
 **Performance**
 
-| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) |
-| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |
-|infer_flash_gqa_bf16_kernel| Triton |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1320 | 0.696291 |
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) | GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
+|decode_flash_gqa_bf16_kernel| CUDA |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1340 | 0.685 | ---
+|decode_flash_gqa_bf16_kernel| Triton |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1470 | 0.625 | ---
+|flash_gqa_forward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim = 128`|bf16|bf16|fp32| 1130 |---| 60.81 |
+|flash_gqa_backward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim = 128`|bf16|bf16|fp32| 3100 |---| 55.42 |
+</details>
+
+<details>
+<summary><strong>FlashMLA</strong></summary>
+
+**Description**
+
+- `flash_mla_forward_bf16_kernel`: prefill phase of inference or training.
+- `flash_mla_backward_bf16_kernel`: backward pass for Flash MLA.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) | GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
+|flash_mla_forward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 16`<br>`HeadDim(QK) = 192`<br>`HeadDim(V) = 128`|bf16|bf16|fp32| 1440 |---| 59.65 |
+|flash_mla_backward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 16`<br>`HeadDim(QK) = 192`<br>`HeadDim(V) = 128`|bf16|bf16|fp32| 4450 |---| 50.19 |
 </details>
 
 <details>
