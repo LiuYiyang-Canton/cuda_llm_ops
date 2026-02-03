@@ -48,8 +48,6 @@ CPU hash generation for Engram features.
 |GetNgramHashes| C++ |`B = 1`<br>`T = 128K`<br>`MaxNgram = 3`<br>`Heads = 8`|int64| 638 |
 </details>
 
-
-
 <details>
 <summary><strong>Gated Linear Units</strong></summary>
 
@@ -84,7 +82,7 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 </details>
 
 <details>
-<summary><strong>FlashGQA</strong></summary>
+<summary><strong>GQA</strong></summary>
 
 **Description**
 
@@ -99,22 +97,6 @@ where $\sigma$ is a configurable activation (e.g., sigmoid for GLU, SiLU for Swi
 |decode_flash_gqa_bf16_kernel| Triton |`Batch = 60`<br>`SeqLen = 4096`<br>`Q Heads = 128`<br>`KV Heads = 8`<br>`HeadDim = 128`|bf16|bf16|fp32|  1470 | 0.625 | ---
 |flash_gqa_forward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim = 128`|bf16|bf16|fp32| 1130 |---| 60.81 |
 |flash_gqa_backward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim = 128`|bf16|bf16|fp32| 3100 |---| 55.42 |
-</details>
-
-<details>
-<summary><strong>FlashMLA</strong></summary>
-
-**Description**
-
-- `flash_mla_forward_bf16_kernel`: prefill phase of inference or training.
-- `flash_mla_backward_bf16_kernel`: backward pass for Flash MLA.
-
-**Performance**
-
-| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) | GPU TFLOPS |
-| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
-|flash_mla_forward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 16`<br>`HeadDim(QK) = 192`<br>`HeadDim(V) = 128`|bf16|bf16|fp32| 1440 |---| 59.65 |
-|flash_mla_backward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 16`<br>`HeadDim(QK) = 192`<br>`HeadDim(V) = 128`|bf16|bf16|fp32| 4450 |---| 50.19 |
 </details>
 
 <details>
@@ -133,20 +115,6 @@ Computes LayerNorm along the hidden dimension.
 </details>
 
 <details>
-<summary><strong>Linear Attention: SSD (Mamba2)</strong></summary>
-
-**Description**
-
-Chunkise implementation of State Space Duality from Mamba2.
-
-**Performance**
-
-| Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS| GPU Memory BW (TB/s)|
-| :--- | :--- | :--- |:--- |:--- |:--- |
-|Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`BC Heads = 1`<br>`X Heads = 8`<br>`StateDim = 64`<br>`HeadDim = 64`<br>`Chunk size = 128`|bf16 (except the fp32 decay) |  2.609 | 14.017 | 0.388
-</details>
-
-<details>
 <summary><strong>Linear Attention: Gated DeltaNet</strong></summary>
 
 **Description**
@@ -158,6 +126,20 @@ Chunkise implementation of Gated DeltaNet.
 | Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS| GPU Memory BW (TB/s)|
 | :--- | :--- |:--- |:--- |:--- |:--- |
 |Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`Num Heads = 8`<br>`HeadDim = 64`<br>`Chunk size = 64`|bf16 (except the fp32 decay) |  8.338 | 8.929 | 0.426 |
+</details>
+
+<details>
+<summary><strong>Linear Attention: SSD (Mamba2)</strong></summary>
+
+**Description**
+
+Chunkise implementation of State Space Duality from Mamba2.
+
+**Performance**
+
+| Kernel Type | Input Shape | Input Type |GPU Time (ms)| GPU TFLOPS| GPU Memory BW (TB/s)|
+| :--- | :--- | :--- |:--- |:--- |:--- |
+|Triton |`Batch = 1`<br>`SeqLen = 128K`<br>`BC Heads = 1`<br>`X Heads = 8`<br>`StateDim = 64`<br>`HeadDim = 64`<br>`Chunk size = 128`|bf16 (except the fp32 decay) |  2.609 | 14.017 | 0.388
 </details>
 
 <details>
@@ -173,6 +155,22 @@ mHCSinkhornKernel: Sinkhorn-Knopp iterations for multi-hyper-connection streams.
 | :--- | :--- | :--- |:--- |:--- |:--- |
 |mHCSinkhornKernel| CUDA |`Batch = 2`<br>`SeqLen = 128K`<br>`HC Streams = 4`<br>`Iterations = 20`|fp32| 32.94 | 509.34 |
 |mHCSinkhornBackwardKernel| CUDA |`Batch = 2`<br>`SeqLen = 128K`<br>`HC Streams = 4`<br>`Iterations = 20`|fp32| 111.2 | 452.44 |
+</details>
+
+<details>
+<summary><strong>MLA</strong></summary>
+
+**Description**
+
+- `flash_mla_forward_bf16_kernel`: prefill phase of inference or training.
+- `flash_mla_backward_bf16_kernel`: backward pass for Flash MLA.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) | GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
+|flash_mla_forward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 16`<br>`HeadDim(QK) = 192`<br>`HeadDim(V) = 128`|bf16|bf16|fp32| 1440 |---| 59.65 |
+|flash_mla_backward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 16`<br>`HeadDim(QK) = 192`<br>`HeadDim(V) = 128`|bf16|bf16|fp32| 4450 |---| 50.19 |
 </details>
 
 <details>
@@ -218,6 +216,22 @@ Applies rotary position embeddings along the hidden dimension for bf16 inputs/ou
 | Kernel | Kernel Type | Input Shape | Input Type |Output Type|GPU Time (us)| GPU Memory BW (TB/s)|
 | :--- | :--- | :--- |:--- |:--- |:--- |:--- |
 |RopeBf16Kernel| CUDA |`BATCH = 1`<br>`SEQLEN = 512K`<br> `HIDDEN = 128`|bf16|bf16|510.112 | 0.478602 |
+</details>
+
+<details>
+<summary><strong>Sliding Window Attention</strong></summary>
+
+**Description**
+
+- `flash_swa_forward_bf16_kernel`: prefill phase of inference or training (with sink).
+- `flash_swa_backward_bf16_kernel`: backward pass for Flash SWA (with sink).
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) | GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
+|flash_swa_forward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim(QK) = 128`<br>`HeadDim(V) = 128`<br>`Window = 512`|bf16|bf16|fp32| 280.000 |0.115646| 61.356676 |
+|flash_swa_backward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 4096`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim(QK) = 128`<br>`HeadDim(V) = 128`<br>`Window = 512`|bf16|bf16|fp32| 870.000 |0.052992| 49.367440 |
 </details>
 
 <details>
@@ -267,7 +281,6 @@ Fused softmax + cross-entropy loss.
 |RadixSortFp32Kernel| CUDA |`BATCH = 60`<br> `ARRAY_LENGTH = 2K`|fp32| 136.768 |
 || |`BATCH = 1`<br> `ARRAY_LENGTH = 1M`|fp32| 200.064 |
 </details>
-
 
 <details>
 <summary><strong>TopK</strong></summary>
