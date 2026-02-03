@@ -1,0 +1,644 @@
+# ==============================================================================
+# Author: Liu Yiyang
+# Date:   2026-02-03
+# Purpose: Accuracy tests for Flash SWA Triton kernel (Training / Inference Prefill).
+# ==============================================================================
+
+import math
+import os
+import sys
+
+import torch
+import triton.testing
+
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+python_src_dir = os.path.join(repo_root, "src", "python")
+if python_src_dir not in sys.path:
+    sys.path.append(python_src_dir)
+
+from SWA.flash_swa_triton_kernel import (  # noqa: E402
+    launch_flash_swa_forward_bf16_kernel,
+)
+from SWA.flash_swa_backward_triton_kernel import (  # noqa: E402
+    launch_flash_swa_backward_bf16_kernel,
+)
+
+window_size = 512
+
+def flash_swa_forward_reference(
+    q,
+    k,
+    v,
+    scale=None,
+    out_dtype=None,
+    return_lse=False,
+    window_size=window_size,
+    sink_value=None,
+):
+    """
+    Compute a reference Flash SWA forward output with stable softmax.
+
+    Main feature:
+        Recomputes sliding-window attention with a sink term in the softmax denominator.
+
+    Inputs:
+        q: torch.Tensor bf16/float32 of shape [q_heads, seq_len_q, head_dim_qk]
+        k: torch.Tensor bf16/float32 of shape [kv_heads, seq_len_kv, head_dim_qk]
+        v: torch.Tensor bf16/float32 of shape [kv_heads, seq_len_kv, head_dim_v]
+        scale: optional float scalar
+        out_dtype: optional torch.dtype for the output
+        return_lse: bool scalar, return log-sum-exp tensor when True
+        window_size: int32 scalar, sliding-window size
+        sink_value: torch.Tensor float32 of shape [num_query_heads], sink term per query head
+
+    Outputs:
+        out: torch.Tensor out_dtype of shape [q_heads, seq_len_q, head_dim_v]
+        lse: torch.Tensor float32 of shape [q_heads, seq_len_q] (if return_lse is True)
+    """
+    if sink_value is None:
+        raise ValueError("sink_value must be provided")
+    if scale is None:
+        scale = 1.0 / math.sqrt(q.shape[-1])
+    if out_dtype is None:
+        out_dtype = q.dtype
+
+    num_query_heads, seq_len_q, head_dim_qk = q.shape
+    num_kv_heads, seq_len_kv, k_head_dim = k.shape
+    _, _, head_dim_v = v.shape
+    if num_query_heads % num_kv_heads != 0:
+        raise ValueError("num_query_heads must be divisible by num_kv_heads")
+    if k_head_dim != head_dim_qk:
+        raise ValueError("Q and K must share head_dim_qk")
+    group_size = num_query_heads // num_kv_heads
+
+    if not isinstance(sink_value, torch.Tensor):
+        raise ValueError("sink_value must be a torch.Tensor")
+    if sink_value.dim() != 1 or sink_value.numel() != num_query_heads:
+        raise ValueError("sink_value must have shape [num_query_heads]")
+    if sink_value.device != q.device:
+        raise ValueError("sink_value must be on the same device as Q")
+    sink_value_fp32 = sink_value.to(torch.float32)
+
+    q_fp32 = q.to(torch.float32)
+    k_fp32 = k.to(torch.float32)
+    v_fp32 = v.to(torch.float32)
+    out_fp32 = torch.empty(
+        (num_query_heads, seq_len_q, head_dim_v),
+        device=q.device,
+        dtype=torch.float32,
+    )
+    lse_fp32 = torch.empty((num_query_heads, seq_len_q), device=q.device, dtype=torch.float32)
+    q_idx = torch.arange(seq_len_q, device=q.device)
+    kv_idx = torch.arange(seq_len_kv, device=q.device)
+    window_mask = (kv_idx[None, :] <= q_idx[:, None]) & (
+        kv_idx[None, :] >= (q_idx[:, None] - (window_size - 1))
+    )
+
+    for kv_idx in range(num_kv_heads):
+        head_start = kv_idx * group_size
+        head_end = (kv_idx + 1) * group_size
+        q_slice = q_fp32[head_start:head_end, :, :]
+        k_slice = k_fp32[kv_idx, :, :]
+        v_slice = v_fp32[kv_idx, :, :]
+
+        scores = torch.matmul(q_slice, k_slice.transpose(0, 1)) * scale
+        scores.masked_fill_(~window_mask.unsqueeze(0), -float("inf"))
+        row_max = torch.amax(scores, dim=-1, keepdim=True)
+        exp_scores = torch.exp(scores - row_max)
+        sink_value_head = sink_value_fp32[head_start:head_end].view(-1, 1, 1)
+        denom = torch.sum(exp_scores, dim=-1, keepdim=True) + sink_value_head * torch.exp(-row_max)
+        probs = exp_scores / denom
+        lse_slice = torch.log(denom.squeeze(-1)) + row_max.squeeze(-1)
+
+        out_slice = torch.matmul(probs, v_slice)
+        out_fp32[head_start:head_end, :, :] = out_slice
+        lse_fp32[head_start:head_end, :] = lse_slice
+
+    if return_lse:
+        return out_fp32.to(out_dtype), lse_fp32
+    return out_fp32.to(out_dtype)
+
+def flash_swa_backward_reference(
+    q,
+    k,
+    v,
+    o,
+    grad_o,
+    scale=None,
+    window_size=window_size,
+    sink_value=None,
+):
+    """
+    Compute a reference Flash SWA backward pass with stable softmax.
+
+    Main feature:
+        Recomputes sliding-window attention with a sink term for gradient verification.
+
+    Inputs:
+        q: torch.Tensor bf16 of shape [q_heads, seq_len_q, head_dim_qk]
+        k: torch.Tensor bf16 of shape [kv_heads, seq_len_kv, head_dim_qk]
+        v: torch.Tensor bf16 of shape [kv_heads, seq_len_kv, head_dim_v]
+        o: torch.Tensor bf16 of shape [q_heads, seq_len_q, head_dim_v]
+        grad_o: torch.Tensor bf16 of shape [q_heads, seq_len_q, head_dim_v]
+        scale: optional float scalar
+        window_size: int32 scalar, sliding-window size
+        sink_value: torch.Tensor float32 of shape [num_query_heads], sink term per query head
+
+    Outputs:
+        grad_q: torch.Tensor same dtype as q of shape [q_heads, seq_len_q, head_dim_qk]
+        grad_k: torch.Tensor same dtype as k of shape [kv_heads, seq_len_kv, head_dim_qk]
+        grad_v: torch.Tensor same dtype as v of shape [kv_heads, seq_len_kv, head_dim_v]
+    """
+    if sink_value is None:
+        raise ValueError("sink_value must be provided")
+    if scale is None:
+        scale = 1.0 / math.sqrt(q.shape[-1])
+
+    num_query_heads, seq_len_q, head_dim_qk = q.shape
+    num_kv_heads, seq_len_kv, k_head_dim = k.shape
+    _, _, head_dim_v = v.shape
+    _, _, o_head_dim = o.shape
+    _, _, grad_o_head_dim = grad_o.shape
+    if num_query_heads % num_kv_heads != 0:
+        raise ValueError("num_query_heads must be divisible by num_kv_heads")
+    if k_head_dim != head_dim_qk:
+        raise ValueError("Q and K must share head_dim_qk")
+    if o_head_dim != head_dim_v or grad_o_head_dim != head_dim_v:
+        raise ValueError("O and grad_o must share head_dim_v with V")
+    group_size = num_query_heads // num_kv_heads
+
+    if not isinstance(sink_value, torch.Tensor):
+        raise ValueError("sink_value must be a torch.Tensor")
+    if sink_value.dim() != 1 or sink_value.numel() != num_query_heads:
+        raise ValueError("sink_value must have shape [num_query_heads]")
+    if sink_value.device != q.device:
+        raise ValueError("sink_value must be on the same device as Q")
+    sink_value_fp32 = sink_value.to(torch.float32)
+
+    q_fp32 = q.to(torch.float32)
+    k_fp32 = k.to(torch.float32)
+    v_fp32 = v.to(torch.float32)
+    grad_o_fp32 = grad_o.to(torch.float32)
+
+    grad_q = torch.zeros_like(q_fp32)
+    grad_k = torch.zeros_like(k_fp32)
+    grad_v = torch.zeros_like(v_fp32)
+    q_idx = torch.arange(seq_len_q, device=q.device)
+    kv_idx = torch.arange(seq_len_kv, device=q.device)
+    window_mask = (kv_idx[None, :] <= q_idx[:, None]) & (
+        kv_idx[None, :] >= (q_idx[:, None] - (window_size - 1))
+    )
+
+    for kv_idx in range(num_kv_heads):
+        head_start = kv_idx * group_size
+        head_end = (kv_idx + 1) * group_size
+        q_slice = q_fp32[head_start:head_end, :, :]
+        grad_o_slice = grad_o_fp32[head_start:head_end, :, :]
+        k_slice = k_fp32[kv_idx, :, :]
+        v_slice = v_fp32[kv_idx, :, :]
+        o_slice = o[head_start:head_end, :, :].to(torch.float32)
+
+        scores = torch.matmul(q_slice, k_slice.transpose(0, 1)) * scale
+        scores = scores.masked_fill(~window_mask.unsqueeze(0), -float("inf"))
+        row_max = torch.amax(scores, dim=-1, keepdim=True)
+        exp_scores = torch.exp(scores - row_max)
+        sink_value_head = sink_value_fp32[head_start:head_end].view(-1, 1, 1)
+        denom = torch.sum(exp_scores, dim=-1, keepdim=True) + sink_value_head * torch.exp(-row_max)
+        probs = exp_scores / denom
+
+        grad_p = torch.matmul(grad_o_slice, v_slice.transpose(0, 1))
+        grad_p_dot = torch.sum(grad_o_slice * o_slice, dim=-1, keepdim=True)
+        grad_scores = (grad_p - grad_p_dot) * probs
+
+        grad_q_slice = torch.matmul(grad_scores, k_slice) * scale
+        grad_k_heads = torch.matmul(grad_scores.transpose(-1, -2), q_slice) * scale
+        grad_v_heads = torch.matmul(probs.transpose(-1, -2), grad_o_slice)
+
+        grad_q[head_start:head_end, :, :] = grad_q_slice
+        grad_k[kv_idx, :, :] = grad_k_heads.sum(dim=0)
+        grad_v[kv_idx, :, :] = grad_v_heads.sum(dim=0)
+
+    return grad_q.to(q.dtype), grad_k.to(k.dtype), grad_v.to(v.dtype)
+
+def benchmark_triton_flash_swa_forward(q, k, v, sink_value, warmup, rep):
+    """
+    Benchmark the Triton Flash SWA forward kernel.
+
+    Main feature:
+        Measures kernel latency using Triton's benchmarking utilities.
+
+    Inputs:
+        q: torch.Tensor bf16 of shape [q_heads, seqlen_q, head_dim_qk] or
+           [batch, q_heads, seqlen_q, head_dim_qk]
+        k: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_qk] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_qk]
+        v: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_v] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_v]
+        sink_value: torch.Tensor float32 of shape [q_heads], sink term per query head
+        warmup: int32 scalar, warmup iterations
+        rep: int32 scalar, measurement repetitions
+
+    Outputs:
+        elapsed_ms: float scalar, mean latency in milliseconds
+    """
+    def op():
+        """
+        Invoke the Triton Flash SWA forward kernel.
+
+        Main feature:
+            Dispatches the Triton Flash SWA forward kernel.
+
+        Inputs:
+            None
+
+        Outputs:
+            None
+        """
+        _ = launch_flash_swa_forward_bf16_kernel(
+            q,
+            k,
+            v,
+            window_size=window_size,
+            sink_value=sink_value,
+        )
+
+    return triton.testing.do_bench(op, warmup=warmup, rep=rep)
+
+
+def bytes_accessed_forward(q, k, v, o):
+    """
+    Estimate bytes moved by Flash SWA forward.
+
+    Main feature:
+        Approximates total bytes read and written using sliding-window coverage.
+
+    Inputs:
+        q: torch.Tensor bf16 of shape [q_heads, seqlen_q, head_dim_qk] or
+           [batch, q_heads, seqlen_q, head_dim_qk]
+        k: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_qk] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_qk]
+        v: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_v] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_v]
+        o: torch.Tensor bf16 of shape [q_heads, seqlen_q, head_dim_v] or
+           [batch, q_heads, seqlen_q, head_dim_v]
+
+    Outputs:
+        total_bytes: int64 scalar
+    """
+    if q.dim() == 3:
+        batch = 1
+        q_heads = q.shape[0]
+        seqlen_q = q.shape[1]
+        head_dim_qk = q.shape[2]
+    else:
+        batch = q.shape[0]
+        q_heads = q.shape[1]
+        seqlen_q = q.shape[2]
+        head_dim_qk = q.shape[3]
+    if k.dim() == 3:
+        k_heads = k.shape[0]
+        seqlen_kv = k.shape[1]
+    else:
+        k_heads = k.shape[1]
+        seqlen_kv = k.shape[2]
+    if v.dim() == 3:
+        head_dim_v = v.shape[2]
+    else:
+        head_dim_v = v.shape[3]
+
+    total_bytes = (
+        batch * q_heads * seqlen_q * head_dim_qk * q.element_size() +
+        batch * k_heads * seqlen_kv * head_dim_qk * k.element_size() +
+        batch * k_heads * seqlen_kv * head_dim_v * v.element_size() +
+        batch * q_heads * seqlen_q * head_dim_v * o.element_size()
+    )
+    return total_bytes
+
+
+def flops_flash_swa_forward(batch, q_heads, seqlen_q, head_dim_qk, head_dim_v, window_size):
+    """
+    Estimate FLOPs for Flash SWA forward (QK + PV).
+
+    Main feature:
+        Approximates multiply-add operations for sliding-window attention.
+
+    Inputs:
+        batch: int32 scalar
+        q_heads: int32 scalar
+        seqlen_q: int32 scalar
+        head_dim_qk: int32 scalar, head dimension for Q/K
+        head_dim_v: int32 scalar, head dimension for V/output
+        window_size: int32 scalar, sliding-window size
+
+    Outputs:
+        total_flops: int64 scalar
+    """
+    flops_per_head = 2 * seqlen_q * window_size * (head_dim_qk + head_dim_v)
+    return int(batch * q_heads * flops_per_head)
+
+
+def bytes_accessed_backward(q, k, v, o, grad_o, grad_q, grad_k, grad_v):
+    """
+    Estimate bytes moved by Flash SWA backward.
+
+    Main feature:
+        Approximates total bytes read and written by the backward kernel with windowed coverage.
+
+    Inputs:
+        q: torch.Tensor bf16 of shape [q_heads, seqlen_q, head_dim_qk] or
+           [batch, q_heads, seqlen_q, head_dim_qk]
+        k: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_qk] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_qk]
+        v: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_v] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_v]
+        o: torch.Tensor bf16 of shape [q_heads, seqlen_q, head_dim_v] or
+           [batch, q_heads, seqlen_q, head_dim_v]
+        grad_o: torch.Tensor bf16 of shape [q_heads, seqlen_q, head_dim_v] or
+           [batch, q_heads, seqlen_q, head_dim_v]
+        grad_q: torch.Tensor bf16 of shape [q_heads, seqlen_q, head_dim_qk] or
+           [batch, q_heads, seqlen_q, head_dim_qk]
+        grad_k: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_qk] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_qk]
+        grad_v: torch.Tensor bf16 of shape [num_kv_heads, seqlen_kv, head_dim_v] or
+           [batch, num_kv_heads, seqlen_kv, head_dim_v]
+
+    Outputs:
+        total_bytes: int64 scalar
+    """
+    if q.dim() == 3:
+        batch = 1
+        q_heads = q.shape[0]
+        seqlen_q = q.shape[1]
+        head_dim_qk = q.shape[2]
+    else:
+        batch = q.shape[0]
+        q_heads = q.shape[1]
+        seqlen_q = q.shape[2]
+        head_dim_qk = q.shape[3]
+    if k.dim() == 3:
+        k_heads = k.shape[0]
+        seqlen_kv = k.shape[1]
+    else:
+        k_heads = k.shape[1]
+        seqlen_kv = k.shape[2]
+    if v.dim() == 3:
+        head_dim_v = v.shape[2]
+    else:
+        head_dim_v = v.shape[3]
+    return (
+        batch * q_heads * seqlen_q * head_dim_qk * q.element_size() +  # read Q
+        batch * k_heads * seqlen_kv * head_dim_qk * k.element_size() +  # read K
+        batch * k_heads * seqlen_kv * head_dim_v * v.element_size() +  # read V
+        batch * q_heads * seqlen_q * head_dim_v * o.element_size() +  # read O
+        batch * q_heads * seqlen_q * head_dim_v * grad_o.element_size() +  # read grad_O
+        batch * q_heads * seqlen_q * head_dim_qk * grad_q.element_size() +  # write grad_Q
+        batch * k_heads * seqlen_kv * head_dim_qk * grad_k.element_size() +  # write grad_K
+        batch * k_heads * seqlen_kv * head_dim_v * grad_v.element_size()  # write grad_V
+    )
+
+
+def flops_flash_swa_backward(batch, q_heads, seqlen_q, seqlen_kv, head_dim_qk, head_dim_v, window_size):
+    """
+    Estimate FLOPs for Flash SWA backward (QK + dP + dQ + dK + dV).
+
+    Main feature:
+        Approximates multiply-add operations for windowed backward matmuls.
+
+    Inputs:
+        batch: int32 scalar
+        q_heads: int32 scalar
+        seqlen_q: int32 scalar
+        seqlen_kv: int32 scalar
+        head_dim_qk: int32 scalar, head dimension for Q/K
+        head_dim_v: int32 scalar, head dimension for V/output
+        window_size: int32 scalar, sliding-window size
+
+    Outputs:
+        total_flops: int64 scalar
+    """
+    flops_per_head = 2 * seqlen_q * window_size * (3 * head_dim_qk + 2 * head_dim_v)
+    return int(batch * q_heads * flops_per_head)
+
+
+def relative_error(ref, approx):
+    """
+    Compute ||ref - approx|| / ||ref||.
+
+    Main feature:
+        Returns a relative L2 error for two tensors.
+
+    Inputs:
+        ref: torch.Tensor float32 of shape [*]
+        approx: torch.Tensor float32 of shape [*]
+
+    Outputs:
+        error: float scalar
+    """
+    if ref.shape != approx.shape:
+        raise ValueError(f"Shape mismatch: {ref.shape} vs {approx.shape}")
+    if ref.dtype != approx.dtype:
+        raise ValueError(f"Data type mismatch: {ref.dtype} vs {approx.dtype}")
+    denom = torch.linalg.norm(ref)
+    if denom == 0:
+        return float(torch.linalg.norm(ref - approx))
+    return float(torch.linalg.norm(ref - approx) / denom)
+
+def generate_inputs(
+    seq_len,
+    head_dim_qk,
+    head_dim_v,
+    num_query_heads,
+    num_kv_heads,
+    device,
+    window_size=window_size,
+):
+    """
+    Generate Flash SWA backward inputs for testing.
+
+    Main feature:
+        Creates bf16 tensors, randomized positive sink values, and a matching forward output.
+
+    Inputs:
+        seq_len: int32 scalar
+        head_dim_qk: int32 scalar, head dimension for Q/K
+        head_dim_v: int32 scalar, head dimension for V/output
+        num_query_heads: int32 scalar
+        num_kv_heads: int32 scalar
+        device: torch.device scalar
+        window_size: int32 scalar, sliding-window size
+
+    Outputs:
+        q: torch.Tensor bf16 of shape [num_query_heads, seq_len, head_dim_qk]
+        k: torch.Tensor bf16 of shape [num_kv_heads, seq_len, head_dim_qk]
+        v: torch.Tensor bf16 of shape [num_kv_heads, seq_len, head_dim_v]
+        o: torch.Tensor bf16 of shape [num_query_heads, seq_len, head_dim_v]
+        grad_o: torch.Tensor bf16 of shape [num_query_heads, seq_len, head_dim_v]
+        sink_value: torch.Tensor float32 of shape [num_query_heads]
+    """
+    torch.manual_seed(0)
+    q = torch.rand((num_query_heads, seq_len, head_dim_qk), device=device, dtype=torch.bfloat16)
+    k = torch.rand((num_kv_heads, seq_len, head_dim_qk), device=device, dtype=torch.bfloat16)
+    v = torch.rand((num_kv_heads, seq_len, head_dim_v), device=device, dtype=torch.bfloat16)
+    sink_value = torch.rand((num_query_heads,), device=device, dtype=torch.float32) + 1.0e-6
+    o = flash_swa_forward_reference(
+        q,
+        k,
+        v,
+        out_dtype=q.dtype,
+        window_size=window_size,
+        sink_value=sink_value,
+    )
+    grad_o = torch.rand_like(o)
+    return q, k, v, o, grad_o, sink_value
+
+def run_tests():
+    """
+    Validate Flash SWA forward and backward kernels.
+
+    Main feature:
+        Compares reference gradients with Triton backward and benchmarks Triton kernels.
+
+    Inputs:
+        None
+
+    Outputs:
+        None
+    """
+    seq_len = 4096
+    head_dim_qk = 128
+    head_dim_v = 128
+    num_kv_heads = 1
+    num_query_heads = 16
+    warmup_iters = 20
+    rep_iters = 20
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    q, k, v, o, grad_o, sink_value = generate_inputs(
+        seq_len,
+        head_dim_qk,
+        head_dim_v,
+        num_query_heads,
+        num_kv_heads,
+        device,
+        window_size=window_size,
+    )
+    grad_q_ref, grad_k_ref, grad_v_ref = flash_swa_backward_reference(
+        q,
+        k,
+        v,
+        o,
+        grad_o,
+        window_size=window_size,
+        sink_value=sink_value,
+    )
+
+    out_triton, lse_triton = launch_flash_swa_forward_bf16_kernel(
+        q,
+        k,
+        v,
+        window_size=window_size,
+        sink_value=sink_value,
+    )
+    out_ref, lse_ref = flash_swa_forward_reference(
+        q,
+        k,
+        v,
+        out_dtype=q.dtype,
+        return_lse=True,
+        window_size=window_size,
+        sink_value=sink_value,
+    )
+    err_out = relative_error(out_ref.to(torch.float32), out_triton.to(torch.float32))
+    err_lse = relative_error(lse_ref, lse_triton.to(torch.float32))
+    print(f"forward output relative error: {err_out:.3e}")
+    print(f"forward lse relative error: {err_lse:.3e}")
+
+    grad_q_triton, grad_k_triton, grad_v_triton = launch_flash_swa_backward_bf16_kernel(
+        q,
+        k,
+        v,
+        o,
+        lse_ref,
+        grad_o,
+        window_size=window_size,
+    )
+    err_grad_q = relative_error(grad_q_ref.to(torch.float32), grad_q_triton.to(torch.float32))
+    err_grad_k = relative_error(grad_k_ref.to(torch.float32), grad_k_triton.to(torch.float32))
+    err_grad_v = relative_error(grad_v_ref.to(torch.float32), grad_v_triton.to(torch.float32))
+    print(f"backward grad_q relative error: {err_grad_q:.3e}")
+    print(f"backward grad_k relative error: {err_grad_k:.3e}")
+    print(f"backward grad_v relative error: {err_grad_v:.3e}")
+
+    forward_ms = benchmark_triton_flash_swa_forward(
+        q,
+        k,
+        v,
+        sink_value,
+        warmup=warmup_iters,
+        rep=rep_iters,
+    )
+    backward_ms = triton.testing.do_bench(
+        lambda: launch_flash_swa_backward_bf16_kernel(
+            q,
+            k,
+            v,
+            o,
+            lse_ref,
+            grad_o,
+            window_size=window_size,
+        ),
+        warmup=warmup_iters,
+        rep=rep_iters,
+    )
+    moved_bytes = bytes_accessed_forward(q, k, v, out_triton)
+    forward_bw = moved_bytes / (forward_ms * 1e-3) / (1024 ** 4)
+    total_flops = flops_flash_swa_forward(
+        batch=1,
+        q_heads=q.shape[0],
+        seqlen_q=q.shape[1],
+        head_dim_qk=q.shape[2],
+        head_dim_v=v.shape[2],
+        window_size=window_size,
+    )
+    forward_tflops = total_flops / (forward_ms * 1e-3) / 1e12
+    backward_moved_bytes = bytes_accessed_backward(
+        q,
+        k,
+        v,
+        o,
+        grad_o,
+        grad_q_triton,
+        grad_k_triton,
+        grad_v_triton,
+    )
+    backward_bw = backward_moved_bytes / (backward_ms * 1e-3) / (1024 ** 4)
+    backward_flops = flops_flash_swa_backward(
+        batch=1,
+        q_heads=q.shape[0],
+        seqlen_q=q.shape[1],
+        seqlen_kv=k.shape[1],
+        head_dim_qk=q.shape[2],
+        head_dim_v=v.shape[2],
+        window_size=window_size,
+    )
+    backward_tflops = backward_flops / (backward_ms * 1e-3) / 1e12
+    forward_us = forward_ms * 1e3
+    backward_us = backward_ms * 1e3
+    print(
+        "flash_swa_forward_bf16_kernel: "
+        f"{forward_us:.3f} us | "
+        f"approx. bandwidth: {forward_bw:.6f} TB/s | "
+        f"approx. TFLOPS: {forward_tflops:.6f}"
+    )
+    print(
+        "flash_swa_backward_bf16_kernel: "
+        f"{backward_us:.3f} us | "
+        f"approx. bandwidth: {backward_bw:.6f} TB/s | "
+        f"approx. TFLOPS: {backward_tflops:.6f}"
+    )
+
+if __name__ == "__main__":
+    run_tests()
