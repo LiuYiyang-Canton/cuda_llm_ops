@@ -235,6 +235,22 @@ Applies rotary position embeddings along the hidden dimension for bf16 inputs/ou
 </details>
 
 <details>
+<summary><strong>SparseGQA</strong></summary>
+
+**Description**
+
+- `flash_sgqa_forward_bf16_kernel`: prefill phase of inference or training (sparse KV selection).
+- `flash_sgqa_backward_bf16_kernel`: backward pass for Flash SparseGQA.
+
+**Performance**
+
+| Kernel | Kernel Type | Input Shape | Input Type |Output Type|Accum Type| GPU Time (us)| GPU Memory BW (TB/s) | GPU TFLOPS |
+| :--- | :--- | :--- |:--- |:--- |:--- |:--- |:--- |:--- |
+|flash_sgqa_forward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 32K`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim(QK) = 128`<br>`HeadDim(V) = 128`<br>`Num Sparse KV = 512`|bf16|bf16|fp32| 3690 |---| 37.24 |
+|flash_sgqa_backward_bf16_kernel| Triton |`Batch = 1`<br>`SeqLen = 32K`<br>`Q Heads = 16`<br>`KV Heads = 1`<br>`HeadDim(QK) = 128`<br>`HeadDim(V) = 128`<br>`Num Sparse KV = 512`|bf16|bf16|fp32| 17540 |---| 19.58 |
+</details>
+
+<details>
 <summary><strong>Softmax</strong></summary>
 
 **Description**
