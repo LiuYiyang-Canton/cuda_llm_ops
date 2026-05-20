@@ -11,15 +11,15 @@ import sys
 import torch
 import triton.testing
 
-repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-python_src_dir = os.path.join(repo_root, "src", "python")
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+python_src_dir = os.path.join(repo_root, "src", "python", "Triton")
 if python_src_dir not in sys.path:
     sys.path.append(python_src_dir)
 
-from flash_mla_triton_kernel import (  # noqa: E402
+from flash_mla_kernel import (  # noqa: E402
     launch_flash_mla_forward_bf16_kernel,
 )
-from flash_mla_backward_triton_kernel import (  # noqa: E402
+from flash_mla_backward_kernel import (  # noqa: E402
     launch_flash_mla_backward_bf16_kernel,
 )
 

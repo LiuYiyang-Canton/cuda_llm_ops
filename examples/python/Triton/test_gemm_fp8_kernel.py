@@ -1,9 +1,9 @@
 # ==============================================================================
 # Author: Liu Yiyang
 # Date:   2026-01-30
-# Purpose: Accuracy and performance tests for FP16 GEMM Triton kernel.
+# Purpose: Accuracy and performance tests for FP8 GEMM Triton kernel.
 # ==============================================================================
-"""Tests for the FP16 GEMM Triton kernel."""
+"""Tests for the FP8 GEMM Triton kernel."""
 
 import os
 import sys
@@ -11,19 +11,20 @@ import sys
 import torch
 import triton.testing
 
-repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-python_src_dir = os.path.join(repo_root, "src", "python")
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+python_src_dir = os.path.join(repo_root, "src", "python", "Triton")
 if python_src_dir not in sys.path:
     sys.path.append(python_src_dir)
 
-from gemm_fp16_triton_kernel import (  # noqa: E402
-    launch_gemm_fp16_kernel,
+from gemm_fp8_kernel import (  # noqa: E402
+    fp8_dtype,
+    launch_gemm_fp8_kernel,
 )
 
 
 def benchmark_torch_matmul(a, b, out, warmup, rep):
     """
-    Benchmark torch.matmul on fp32 copies of fp16 inputs.
+    Benchmark torch.matmul on fp32 copies of fp8 inputs.
 
     Main feature:
         Measures the PyTorch baseline latency for GEMM.
@@ -58,14 +59,14 @@ def benchmark_torch_matmul(a, b, out, warmup, rep):
 
 def benchmark_triton_matmul(a, b, out, warmup, rep):
     """
-    Benchmark the Triton FP16 GEMM kernel.
+    Benchmark the Triton FP8 GEMM kernel.
 
     Main feature:
         Measures Triton kernel latency.
 
     Inputs:
-        a: torch.Tensor float16 of shape [m, k]
-        b: torch.Tensor float16 of shape [n, k]
+        a: torch.Tensor fp8 of shape [m, k]
+        b: torch.Tensor fp8 of shape [n, k]
         out: torch.Tensor float32 of shape [m, n]
         warmup: int32 scalar
         rep: int32 scalar
@@ -86,7 +87,7 @@ def benchmark_triton_matmul(a, b, out, warmup, rep):
         Outputs:
             None
         """
-        launch_gemm_fp16_kernel(a, b, out)
+        launch_gemm_fp8_kernel(a, b, out)
 
     return triton.testing.do_bench(op, warmup=warmup, rep=rep)
 
@@ -135,8 +136,8 @@ def run_tests():
     device = "cuda:0"
 
     torch.manual_seed(0)
-    a = torch.rand((m, k), dtype=torch.float16, device=device)
-    b = torch.rand((n, k), dtype=torch.float16, device=device)
+    a = torch.rand((m, k), dtype=torch.float32, device=device).to(fp8_dtype)
+    b = torch.rand((n, k), dtype=torch.float32, device=device).to(fp8_dtype)
     a_fp32 = a.float()
     b_fp32 = b.float()
 
@@ -150,14 +151,14 @@ def run_tests():
     torch_tflops = flops / (torch_ms * 1e-3) / 1e12
     print(f"PyTorch time: {torch_ms * 1000:.3f} us | throughput: {torch_tflops:.3f} TFLOPS")
 
-    triton_ms = benchmark_triton_matmul(a, b, c_triton, warmup_iters, rep=10)
-    launch_gemm_fp16_kernel(a, b, c_triton)
+    triton_ms = benchmark_triton_matmul(a, b, c_triton, warmup_iters, rep=100)
+    launch_gemm_fp8_kernel(a, b, c_triton)
 
     triton_tflops = flops / (triton_ms * 1e-3) / 1e12
     print(f"Triton time: {triton_ms * 1000:.3f} us | throughput: {triton_tflops:.3f} TFLOPS")
 
     error = relative_error(c_ref, c_triton)
-    print(f"gemm_fp16_kernel relative error: {error:.3e}")
+    print(f"gemm_fp8_kernel relative error: {error:.3e}")
 
 
 if __name__ == "__main__":

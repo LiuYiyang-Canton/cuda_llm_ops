@@ -12,12 +12,12 @@ import torch
 import triton.testing
 from fla.ops.utils import solve_tril
 
-repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-python_src_dir = os.path.join(repo_root, "src", "python")
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+python_src_dir = os.path.join(repo_root, "src", "python", "Triton")
 if python_src_dir not in sys.path:
     sys.path.append(python_src_dir)
 
-from gdn_triton_kernel import (  # noqa: E402
+from gdn_kernel import (  # noqa: E402
     compute_local_cumsum,
     compute_output,
     compute_scaled_kkt,

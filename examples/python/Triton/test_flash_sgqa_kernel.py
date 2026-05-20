@@ -10,8 +10,8 @@ import sys
 
 import torch
 
-repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-python_src_dir = os.path.join(repo_root, "src", "python")
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+python_src_dir = os.path.join(repo_root, "src", "python", "Triton")
 if python_src_dir not in sys.path:
     sys.path.append(python_src_dir)
 
