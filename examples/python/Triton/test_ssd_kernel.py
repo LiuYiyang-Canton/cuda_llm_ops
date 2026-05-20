@@ -13,12 +13,12 @@ import torch.nn.functional as functional
 import triton.testing
 from einops import rearrange, repeat
 
-repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-python_src_dir = os.path.join(repo_root, "src", "python")
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+python_src_dir = os.path.join(repo_root, "src", "python", "Triton")
 if python_src_dir not in sys.path:
     sys.path.append(python_src_dir)
 
-from ssd_triton_kernel import (  # noqa: E402
+from ssd_kernel import (  # noqa: E402
     launch_ssd_mamba2,
 )
 
